@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport"
+        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Find Hymn Remote</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <link rel="icon" type="image/png" href="/logoblack.png">
+    <link rel="stylesheet" href="mobile.css">
+</head>
+
+
+<body>
+
+    <header>
+        <div class="header-left">
+            <img src="/logoblack.png" alt="Logo" class="app-logo">
+            <span class="app-title">Find Hymn</span>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;">
+            <div id="status-badge" class="status-badge disconnected">Desconectado</div>
+            <button class="btn-icon" onclick="openMonitorModal()">
+                <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round"
+                        d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                </svg>
+            </button>
+        </div>
+    </header>
+
+    <main>
+        <div class="segmented-control">
+            <label class="segment-opt"><input type="radio" name="source" value="previous" checked
+                    onchange="handleSearch()"><span>Anterior</span></label>
+            <label class="segment-opt"><input type="radio" name="source" value="new"
+                    onchange="handleSearch()"><span>Nuevo</span></label>
+            <label class="segment-opt"><input type="radio" name="source" value="both"
+                    onchange="handleSearch()"><span>Ambos</span></label>
+        </div>
+
+        <!-- NEW SUB TABS (For Cantado/Pista) -->
+        <div id="subTabs" class="sub-tabs">
+            <label class="sub-opt"><input type="radio" name="subcat" value="Cantado" checked
+                    onchange="handleSearch()"><span>Cantado</span></label>
+            <label class="sub-opt"><input type="radio" name="subcat" value="Pista"
+                    onchange="handleSearch()"><span>Pista</span></label>
+        </div>
+
+        <div class="search-wrapper">
+            <input type="text" id="searchInput" placeholder="Buscar himno..." autocomplete="off">
+            <button id="clearBtn" class="clear-btn" onclick="clearSearch()">✕</button>
+        </div>
+        <div id="results">
+            <div style="text-align:center; color:#9ca3af; margin-top:20px; font-size:14px;">Escribe para buscar...</div>
+        </div>
+    </main>
+
+    <!-- COMPACT PLAYER -->
+    <div class="fixed-player">
+        <div class="seek-zone">
+            <input type="range" class="seek-slider" id="seekSlider" min="0" max="100" value="0" oninput="seeking()"
+                onchange="seekEnd()">
+        </div>
+        <div class="player-content">
+            <div class="time-row">
+                <span id="timeCurr">0:00</span>
+                <span id="timeTot">0:00</span>
+            </div>
+            <!-- Top Row: Live Button + Song Title + Volume -->
+            <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
+                <!-- NEW LIVE BUTTON (LEFT) -->
+                <button class="live-btn-pill" id="btnLive" onclick="toggleLive()">
+                    <div class="live-dot"></div><span>CERRADO</span>
+                </button>
+
+                <!-- Song Info (CENTER, FLEX GROW) -->
+                <div class="now-playing" style="flex:1; min-width:0;">
+                    <div class="np-title" id="npTitle">Sin reproducción</div>
+                    <div class="np-meta" id="npMeta">-</div>
+                </div>
+
+                <!-- Volume (RIGHT) -->
+                <div class="vol-container">
+                    <input type="range" class="vol-slider" min="0" max="100" value="100"
+                        oninput="sendCommand('volume', {value: this.value})">
+                </div>
+            </div>
+
+            <!-- Bottom Row: Playback Controls (Grid for absolute center) -->
+            <div class="controls-bar" style="display:grid; grid-template-columns:1fr auto 1fr; align-items:center;">
+
+                <!-- Left Controls Group (Aligned Right) -->
+                <div style="display:flex; gap:8px; justify-content:flex-end; padding-right:8px;">
+                    <!-- Loop -->
+                    <button class="c-btn btn-xs" id="btnLoop" onclick="toggleLoop()">
+                        <svg viewBox="0 0 24 24" fill="currentColor">
+                            <path
+                                d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z" />
+                        </svg>
+                    </button>
+
+                    <!-- Prev -->
+                    <button class="c-btn" onclick="sendCommand('prev')">
+                        <svg viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
+                        </svg>
+                    </button>
+                </div>
+
+                <!-- Play (CENTERED) -->
+                <div style="display:flex; justify-content:center;">
+                    <div class="play-btn" onclick="sendCommand('playPause')" id="playBtn">
+                        <svg id="iconPlay" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M8 5v14l11-7z" />
+                        </svg>
+                        <svg id="iconPause" viewBox="0 0 24 24" fill="currentColor" style="display:none">
+                            <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
+                        </svg>
+                    </div>
+                </div>
+
+                <!-- Right Controls Group (Split: Next+Stop | Maximize) -->
+                <div style="display:flex; justify-content:space-between; align-items:center; padding-left:8px;">
+                    <div style="display:flex; gap:8px;">
+                        <!-- Next -->
+                        <button class="c-btn" onclick="sendCommand('next')">
+                            <svg viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
+                            </svg>
+                        </button>
+
+                        <!-- Stop -->
+                        <button class="c-btn" onclick="sendCommand('stop')">
+                            <svg viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M6 6h12v12H6z" />
+                            </svg>
+                        </button>
+                    </div>
+
+                    <!-- Maximize (Far Right) -->
+                    <button class="c-btn" onclick="sendCommand('fullscreen')">
+                        <svg viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Monitor Modal -->
+    <div id="monitorModal" class="modal-overlay" onclick="if(event.target===this) closeMonitorModal()">
+        <div class="modal-card">
+            <h3 style="margin:0 0 16px 0; text-align:center; font-size:16px;">Seleccionar Pantalla</h3>
+            <div id="monitorLoading" style="text-align:center;color:#999;font-size:13px;padding:10px;">Cargando...</div>
+            <div id="monitorList" style="display:flex;flex-direction:column;gap:8px;"></div>
+            <button onclick="closeMonitorModal()"
+                style="width:100%; padding:10px; margin-top:16px; background:#f3f4f6; border:none; border-radius:10px; font-weight:600; font-size:14px;">Cancelar</button>
+        </div>
+    </div>
+
+    <!-- Login Overlay -->
+    <div id="loginOverlay">
+        <div class="login-card">
+            <h2 class="login-title">Conexión Segura</h2>
+            <input type="password" id="loginKeyword" class="login-input" placeholder="Ingresa la palabra clave">
+            <button id="btnLogin" class="login-btn">Ingresar</button>
+            <div id="loginError" class="login-error">Palabra clave incorrecta</div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        const badge = document.getElementById('status-badge');
+
+        // AUTH HANDLERS
+        let authEnabled = false;
+        socket.on('auth_required', (data) => {
+            authEnabled = data.required;
+            if (authEnabled) {
+                document.getElementById('loginOverlay').style.display = 'flex';
+            } else {
+                document.getElementById('loginOverlay').style.display = 'none';
+                socket.emit('login', '');
+            }
+        });
+
+        socket.on('auth_result', (data) => {
+            if (data.success) {
+                document.getElementById('loginOverlay').style.display = 'none';
+                document.getElementById('loginError').style.display = 'none';
+                document.getElementById('loginKeyword').value = '';
+            } else {
+                document.getElementById('loginError').style.display = 'block';
+                document.getElementById('loginKeyword').style.borderColor = '#ef4444';
+            }
+        });
+
+        const btnLogin = document.getElementById('btnLogin');
+        const inputLogin = document.getElementById('loginKeyword');
+        if (btnLogin) {
+            btnLogin.addEventListener('click', () => {
+                socket.emit('login', inputLogin.value.trim());
+            });
+        }
+
+        const resultsDiv = document.getElementById('results');
+        const searchInput = document.getElementById('searchInput');
+        let debounceTimer;
+
+        // UI Refs
+        const npTitle = document.getElementById('npTitle');
+        const npMeta = document.getElementById('npMeta');
+        const timeCurr = document.getElementById('timeCurr');
+        const timeTot = document.getElementById('timeTot');
+        const iconPlay = document.getElementById('iconPlay');
+        const iconPause = document.getElementById('iconPause');
+        const seekSlider = document.getElementById('seekSlider');
+        const btnLive = document.getElementById('btnLive');
+        const btnLoop = document.getElementById('btnLoop');
+        const subTabs = document.getElementById('subTabs');
+
+        let isSeeking = false;
+        let isLive = false;
+        let isLoop = false;
+
+        // SOCKET
+        socket.on('connect', () => {
+            badge.innerText = "Conectado"; badge.className = "status-badge connected";
+            socket.emit('register', 'mobile');
+            // 'auth_required' comes from server immediately
+            sendCommand('get-status');
+            sendCommand('get-live-state');
+        });
+        socket.on('disconnect', () => { badge.innerText = "Desconectado"; badge.className = "status-badge disconnected"; });
+
+        socket.on('status', (msg) => {
+            try {
+                if (msg.type === 'search-results') renderResults(msg.data);
+                else if (msg.type === 'sync-status') updatePlayerState(msg.data);
+                else if (msg.type === 'monitors-list') renderMonitors(msg.data);
+                else if (msg.type === 'live-state') {
+                    isLive = msg.data.active;
+                    updateLiveBtn();
+                }
+            } catch (e) { console.error(e); }
+        });
+
+        // MONITORS
+        function closeMonitorModal() {
+            const el = document.getElementById('monitorModal');
+            if (!el) return;
+            el.classList.add('closing');
+            setTimeout(() => {
+                el.style.display = 'none';
+                el.classList.remove('closing');
+            }, 300);
+        }
+
+        function openMonitorModal() {
+            document.getElementById('monitorModal').style.display = 'flex';
+            document.getElementById('monitorList').innerHTML = '';
+            document.getElementById('monitorLoading').style.display = 'block';
+            sendCommand('get-monitors');
+        }
+
+        function renderMonitors(data) {
+            document.getElementById('monitorLoading').style.display = 'none';
+            const container = document.getElementById('monitorList');
+            container.innerHTML = '';
+
+            let list = [];
+            let selected = null;
+            if (Array.isArray(data)) list = data;
+            else if (data && data.list) { list = data.list; selected = data.selected; }
+
+            if (list.length === 0) {
+                container.innerHTML = '<div style="text-align:center;color:#999;font-size:13px;">No se encontraron pantallas adicionales.</div>';
+                return;
+            }
+
+            list.forEach(m => {
+                const btn = document.createElement('button');
+                btn.style.cssText = "padding:12px; border-radius:10px; border:1px solid #eee; background:#f9fafb; text-align:left; font-size:13px;";
+                let label = m.label || `Monitor ${m.id}`;
+                if (m.id === selected) {
+                    btn.style.background = '#eff6ff';
+                    btn.style.borderColor = '#2563eb';
+                    btn.style.color = '#1e3a8a';
+                    btn.style.fontWeight = '600';
+                    btn.innerHTML = `✓ ${label}`;
+                } else {
+                    btn.innerText = label;
+                }
+                btn.onclick = () => {
+                    sendCommand('set-monitor', { id: m.id });
+                    closeMonitorModal();
+                };
+                container.appendChild(btn);
+            });
+        }
+
+        // SEARCH
+        searchInput.addEventListener('input', (e) => {
+            const val = e.target.value;
+            document.getElementById('clearBtn').style.display = val ? 'flex' : 'none';
+            clearTimeout(debounceTimer);
+            if (!val.trim()) { renderResults(null); return; }
+            debounceTimer = setTimeout(handleSearch, 300);
+        });
+
+        function handleSearch() {
+            // Check main source
+            const source = document.querySelector('input[name="source"]:checked').value;
+
+            // Show/Hide sub-tabs
+            // We only show Cantado/Pista if source has "New" involved
+            if (source === 'new' || source === 'both') {
+                subTabs.classList.add('visible');
+            } else {
+                subTabs.classList.remove('visible');
+            }
+
+            const query = searchInput.value;
+            if (!query) return;
+
+            // Get sub-category
+            let category = 'Cantado'; // Default
+            const sub = document.querySelector('input[name="subcat"]:checked');
+            if (sub) category = sub.value;
+
+            sendCommand('search', { query, source, category }); // Include category
+        }
+
+        function clearSearch() { searchInput.value = ''; document.getElementById('clearBtn').style.display = 'none'; renderResults(null); }
+        function renderResults(items) {
+            resultsDiv.innerHTML = '';
+            if (!items || !items.length) {
+                resultsDiv.innerHTML = `<div style="text-align:center;color:#9ca3af;margin-top:20px;font-size:13px;">${items === null ? 'Escribe para buscar...' : 'No hay resultados'}</div>`;
+                return;
+            }
+            items.forEach((item, index) => {
+                const el = document.createElement('div');
+                el.className = 'result-item';
+                // Use category in tag if from New
+                let tagText = item.sourceTab === 'previous' ? 'ANT' : 'NUE';
+
+                // Add Animation Style
+                el.style.animation = `slideUpFade 0.3s ease forwards`;
+                el.style.animationDelay = `${index * 0.03}s`; // Stagger
+                el.style.opacity = '0'; // Start invisible
+
+                el.innerHTML = `<span class="res-title">${item.display}</span><span class="res-tag ${item.sourceTab === 'previous' ? 'ant' : 'nue'}">${tagText}</span>`;
+                el.onclick = () => {
+                    // Pass category!
+                    sendCommand('play', { file: item.file, tab: item.sourceTab, category: item.category || 'Cantado', display: item.display });
+                    npTitle.textContent = item.display;
+                    isLive = true; updateLiveBtn();
+                };
+                resultsDiv.appendChild(el);
+            });
+        }
+
+        // PLAYER
+        function updatePlayerState(data) {
+            if (data.type === 'stopped') { resetUI(); return; }
+            if (data.title) npTitle.textContent = data.title;
+            if (data.number) npMeta.textContent = `Himno ${data.number}`;
+            if (data.currentTime !== undefined && data.duration) {
+                const pct = (data.currentTime / data.duration) * 100;
+                if (!isSeeking) {
+                    seekSlider.value = pct;
+                    updateSeekVis(pct);
+                    timeCurr.textContent = fmtTime(data.currentTime);
+                    timeTot.textContent = fmtTime(data.duration);
+                }
+            }
+            if (data.type === 'play') { iconPlay.style.display = 'none'; iconPause.style.display = 'block'; }
+            else if (data.type === 'pause') { iconPlay.style.display = 'block'; iconPause.style.display = 'none'; }
+        }
+
+        function resetUI() {
+            npTitle.textContent = "Sin reproducción"; npMeta.textContent = "-";
+            seekSlider.value = 0; updateSeekVis(0); timeCurr.textContent = "0:00"; timeTot.textContent = "0:00";
+            iconPlay.style.display = 'block'; iconPause.style.display = 'none';
+        }
+
+        function seeking() { isSeeking = true; updateSeekVis(seekSlider.value); }
+        function seekEnd() { isSeeking = false; sendCommand('seek-percent', { percent: seekSlider.value }); }
+        function updateSeekVis(pct) { seekSlider.style.setProperty('--seek-val', pct + '%'); }
+
+        function toggleLoop() {
+            isLoop = !isLoop;
+            btnLoop.classList.toggle('active', isLoop);
+            sendCommand('loop', { value: isLoop });
+        }
+        function toggleLive() { isLive = !isLive; updateLiveBtn(); sendCommand('toggle-live', { active: isLive }); }
+        function updateLiveBtn() {
+            if (isLive) btnLive.classList.add('live-active'); else btnLive.classList.remove('live-active');
+            btnLive.querySelector('span').innerText = isLive ? "EN CURSO" : "CERRADO";
+        }
+
+        function fmtTime(s) { if (!s) return "0:00"; const m = Math.floor(s / 60); const sec = Math.floor(s % 60); return `${m}:${sec.toString().padStart(2, '0')}`; }
+        function sendCommand(a, p = {}) { socket.emit('command', { action: a, ...p }); if (navigator.vibrate) navigator.vibrate(5); }
+    </script>
+</body>
+
+</html>

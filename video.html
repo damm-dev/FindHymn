@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="UTF-8">
+  <title>Video Proyección</title>
+  <style>
+    body {
+      margin: 0;
+      background: url('src/wallpaper.png') no-repeat center center fixed;
+      background-size: cover;
+      color: #6e6e6e;
+      font-family: sans-serif;
+      overflow: hidden;
+    }
+
+    #welcomeMessage {
+      font-size: 4rem;
+      text-align: center;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      user-select: none;
+    }
+
+    #dynamicText {
+      position: relative;
+      font-size: 6.0rem;
+      font-weight: bold;
+      background: linear-gradient(-45deg,
+          black 0%,
+          black 40%,
+          white 50%,
+          black 60%,
+          black 100%);
+      background-size: 200%;
+      background-clip: text;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      animation: shine 15s linear infinite;
+      opacity: 0;
+      transition: opacity 2s ease-in-out;
+    }
+
+    @keyframes shine {
+      0% {
+        background-position: 200%;
+      }
+
+      100% {
+        background-position: -200%;
+      }
+    }
+
+    #bibleVerse {
+      margin-top: 1rem;
+      font-size: 1.5rem;
+      color: #8a8a8a;
+      opacity: 0;
+      transition: opacity 2s ease-in-out;
+    }
+
+    #songText {
+      margin-top: 0.5rem;
+      font-size: 1.5rem;
+      opacity: 0;
+      transition: opacity 2s ease-in-out;
+    }
+
+    video {
+      width: 100vw;
+      height: 100vh;
+      object-fit: contain;
+      background-color: black;
+      display: none;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="welcomeMessage">
+    <div id="dynamicText"></div>
+    <div id="songText" style="margin-top: 0.5rem;">
+      <strong>"Cantad alegres a Dios, habitantes de toda la tierra."</strong>
+    </div>
+    <div id="bibleVerse" style="margin-top: 0.5rem;">
+      Salmo 100:1
+    </div>
+  </div>
+  <video id="proyector" controls autoplay></video>
+
+  <script>
+    const { ipcRenderer } = require('electron');
+    const welcomeMessage = document.getElementById('welcomeMessage');
+    const dynamicText = document.getElementById('dynamicText');
+    const bibleVerse = document.getElementById('bibleVerse');
+    const video = document.getElementById('proyector');
+
+    const textToType = 'BIENVENIDOS';
+    const verseDelay = 500; // ms delay before showing verse after fade-in
+
+    async function showWelcomeMessage() {
+      dynamicText.textContent = textToType;
+      dynamicText.style.opacity = 0;
+      bibleVerse.style.opacity = 0;
+      document.getElementById('songText').style.opacity = 0;
+      // Fade in the welcome text
+      setTimeout(() => {
+        dynamicText.style.opacity = 1;
+      }, 100);
+      // Fade in the bible verse and song text after a delay
+      setTimeout(() => {
+        bibleVerse.style.opacity = 1;
+        document.getElementById('songText').style.opacity = 1;
+      }, verseDelay + 1000);
+    }
+
+    ipcRenderer.on('set-video', (event, ruta) => {
+      video.src = ruta;
+      video.style.display = 'block';
+      welcomeMessage.style.display = 'none';
+      video.play();
+      // Notify parent window that video is playing
+      window.parent.postMessage('video-playing', '*');
+      ipcRenderer.send('media-status', { type: 'play' });
+    });
+
+    // ————— Media API for Main Window —————
+    ipcRenderer.on('media-command', (event, command) => {
+      if (command.action === 'play') {
+        // FIX: If ended, reset to 0 to replay visible video
+        if (video.ended) {
+          video.currentTime = 0;
+        }
+        var playPromise = video.play();
+        if (playPromise !== undefined) {
+          playPromise.then(_ => {
+            // Playback started
+            welcomeMessage.style.display = 'none'; // Ensure welcome screen hidden
+            video.style.display = 'block';
+          })
+            .catch(error => {
+              console.error("Autoplay failed:", error);
+            });
+        }
+      } else if (command.action === 'pause') {
+        video.pause();
+      } else if (command.action === 'seek') {
+        video.currentTime = (command.value / 100) * video.duration;
+      } else if (command.action === 'volume') {
+        video.volume = command.value / 100;
+      } else if (command.action === 'loop') {
+        video.loop = command.value;
+      }
+    });
+
+    video.addEventListener('play', () => ipcRenderer.send('media-status', { type: 'play' }));
+    video.addEventListener('pause', () => ipcRenderer.send('media-status', { type: 'pause' }));
+    video.addEventListener('timeupdate', () => {
+      ipcRenderer.send('media-status', {
+        type: 'timeupdate',
+        currentTime: video.currentTime,
+        duration: video.duration
+      });
+    });
+    video.addEventListener('ended', () => {
+      video.style.display = 'none';
+      welcomeMessage.style.display = 'flex';
+      showWelcomeMessage();
+      // Notify parent window that video ended
+      window.parent.postMessage('video-ended', '*');
+      ipcRenderer.send('media-status', { type: 'ended' });
+    });
+
+    // Show welcome message with typing effect on initial load
+    showWelcomeMessage();
+  </script>
+</body>
+
+</html>

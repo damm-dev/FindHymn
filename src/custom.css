@@ -1,0 +1,114 @@
+/* Estilo para el body con imagen de fondo */
+body {
+  background: url('FindHymn2.jpg') no-repeat center center fixed;
+  background-size: cover;
+  margin: 0;
+  padding: 0;
+  height: 100vh;
+  width: 100vw;
+  font-family: sans-serif;
+}
+
+/* Scrollbar global opcional */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #ccc;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #999;
+}
+
+/* --- SWITCH COMPONENT (Fixed Color) --- */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 34px;
+  height: 18px;
+}
+
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #cbd5e1;
+  /* Gray-400 */
+  transition: .4s;
+  border-radius: 34px;
+  box-shadow: inset 0 0 2px rgba(0, 0, 0, 0.2);
+}
+
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 14px;
+  width: 14px;
+  left: 2px;
+  bottom: 2px;
+  background-color: white;
+  transition: .4s;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+/* SPECIFIC SELECTOR FOR CHECKED STATE */
+/* Matches: input inside .switch that is checked + sibling .slider */
+.switch input:checked+.slider {
+  background-color: #16a34a !important;
+  /* Green-600 */
+}
+
+.switch input:checked+.slider:before {
+  transform: translateX(16px);
+}
+
+/* --- MODAL ANIMATIONS --- */
+@keyframes modalFadeIn {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes modalScaleUp {
+  from {
+    transform: scale(0.9);
+    opacity: 0;
+  }
+
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* Ensure Modals use FlexCenter */
+.modal-overlay {
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(5px);
+}
+
+/* --- DROPDOWN SUBMENU --- */
+.dropdown-menu {
+  z-index: 10000 !important;
+}

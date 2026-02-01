@@ -1,0 +1,797 @@
+<!-- index.html -->
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="UTF-8">
+  <link href="public/styles.css" rel="stylesheet">
+  <link href="src/custom.css" rel="stylesheet">
+  <title>Himnario Video Proyector</title>
+  <style>
+    /* ------------------- GLOBAL STYLES (Moved from Body) ------------------- */
+
+    /* Title Bar Button Hover */
+    .menu-item:hover {
+      background: rgba(0, 0, 0, 0.05);
+    }
+
+    /* Fix Title Bar Button Layout */
+    .menu-item {
+      white-space: nowrap;
+      /* Prevent wrapping */
+    }
+
+    /* Custom Scrollbar for Results */
+    #results::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    #results::-webkit-scrollbar-track {
+      background: #f1f1f1;
+    }
+
+    #results::-webkit-scrollbar-thumb {
+      background: #c1c1c1;
+      border-radius: 4px;
+    }
+
+    #results::-webkit-scrollbar-thumb:hover {
+      background: #a8a8a8;
+    }
+
+    /* Live Active State */
+    .live-active {
+      background-color: #ef4444 !important;
+      /* Red 500 */
+      color: white !important;
+      box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3) !important;
+    }
+
+    .live-active span {
+      background-color: white !important;
+      opacity: 1 !important;
+    }
+
+    /* Animation Logic */
+    .menu-hidden,
+    .results-hidden {
+      opacity: 0;
+      transform: translateY(-10px);
+      pointer-events: none;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      display: block !important;
+    }
+
+    .active-menu,
+    .active-results {
+      opacity: 1 !important;
+      transform: translateY(0) !important;
+      pointer-events: auto !important;
+      display: block !important;
+    }
+
+    /* Hover effect for Category Options */
+    .category-option:hover {
+      background-color: black !important;
+      color: white !important;
+    }
+
+    /* Tab States */
+    .tab-active {
+      background-color: black !important;
+      color: white !important;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1) !important;
+      transform: scale(1.05);
+    }
+
+    .tab-inactive {
+      background-color: transparent !important;
+      color: #4b5563 !important;
+      /* gray-600 */
+      box-shadow: none !important;
+      transform: scale(1);
+    }
+
+    /* Results Styling */
+    .custom-results {
+      position: absolute;
+      top: 100%;
+      left: 1rem;
+      right: 1rem;
+      margin-top: 0;
+      background-color: white;
+      border-radius: 1rem;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+      border: 1px solid #f3f4f6;
+      overflow: hidden;
+      z-index: 40;
+      max-height: 40vh;
+      overflow-y: auto;
+      appearance: none;
+      -webkit-appearance: none;
+      -moz-appearance: none;
+    }
+
+    /* GLOBAL SWITCH STYLES */
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 34px;
+      height: 18px;
+    }
+
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #cbd5e1;
+      /* Gray-400 equivalent */
+      transition: .4s;
+      border-radius: 34px;
+    }
+
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 14px;
+      width: 14px;
+      left: 2px;
+      bottom: 2px;
+      background-color: white;
+      transition: .4s;
+      border-radius: 50%;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+    }
+
+    /* Green when checked */
+    input:checked+.slider {
+      background-color: #16a34a;
+      /* Green-600 */
+    }
+
+    input:checked+.slider:before {
+      transform: translateX(16px);
+    }
+
+    /* DROPDOWN SUBMENU POSITIONING */
+    /* Ensure dropdowns can be positioned side-by-side */
+    .dropdown-menu {
+      /* Existing styles assumed... just ensure z-index is high */
+      z-index: 10000;
+    }
+
+    /* Modal Animation Keyframes */
+    @keyframes modalFadeIn {
+      from {
+        opacity: 0;
+      }
+
+      to {
+        opacity: 1;
+      }
+    }
+
+    @keyframes modalScaleUp {
+      from {
+        transform: scale(0.9);
+        opacity: 0;
+      }
+
+      to {
+        transform: scale(1);
+        opacity: 1;
+      }
+    }
+
+    @keyframes modalFadeOut {
+      from {
+        opacity: 1;
+      }
+
+      to {
+        opacity: 0;
+      }
+    }
+
+    @keyframes modalScaleDown {
+      from {
+        transform: scale(1);
+        opacity: 1;
+      }
+
+      to {
+        transform: scale(0.95);
+        opacity: 0;
+      }
+    }
+
+    /* Clean Footer Styling */
+    .app-footer {
+      display: flex;
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      height: 90px;
+      background: rgba(255, 255, 255, 0.95);
+      backdrop-filter: blur(16px);
+      border-top: 1px solid rgba(0, 0, 0, 0.1);
+      z-index: 9999;
+      box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.1);
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+      box-sizing: border-box;
+      transition: all 0.3s ease;
+    }
+
+    /* SINGLE SEEK BAR ELEMENT (No Wrapper) */
+    .custom-range {
+      position: absolute;
+      top: -6px;
+      /* Center centered line on top border */
+      left: 0;
+      width: 100%;
+      height: 12px;
+      /* Touch target size */
+      -webkit-appearance: none;
+      background-color: transparent;
+      /* Gradient Track Logic */
+      background-image: linear-gradient(to right, black 0%, #e5e7eb 0%);
+      background-size: 100% 4px;
+      /* Thin 4px line */
+      background-position: center;
+      background-repeat: no-repeat;
+      cursor: pointer;
+      margin: 0;
+      display: block;
+      z-index: 10010;
+    }
+
+    .custom-range::-webkit-slider-runnable-track {
+      height: 12px;
+      background: transparent;
+      border: none;
+    }
+
+    .custom-range::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      height: 12px;
+      width: 12px;
+      border-radius: 50%;
+      background: black;
+      margin-top: 0;
+      /* Centered in 12px height */
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+      transition: transform 0.1s;
+      position: relative;
+      z-index: 2;
+    }
+
+    .custom-range::-webkit-slider-thumb:hover {
+      transform: scale(1.2);
+    }
+
+    /* Compact Mode */
+    .app-footer.compact {
+      height: 60px;
+      padding-top: 0;
+    }
+
+    .app-footer.compact .seek-wrapper {
+      top: 0;
+    }
+
+    .app-footer.compact #playerSongInfo {
+      display: none;
+    }
+
+    .app-footer.compact .custom-range {
+      top: -6px;
+    }
+
+    /* Menú title bar NO BORRAR (SIEMPRE SE USA) */
+    .dropdown-menu {
+      position: fixed;
+      background: rgba(255, 255, 255, 0.95);
+      backdrop-filter: blur(16px);
+      border: 1px solid rgba(0, 0, 0, 0.1);
+      border-radius: 8px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+      padding: 6px;
+      opacity: 0;
+      transform: translateY(-10px) scale(0.95);
+      pointer-events: none;
+      transition: opacity 0.2s cubic-bezier(0.2, 0, 0, 1), transform 0.2s cubic-bezier(0.2, 0, 0, 1);
+      z-index: 10001;
+      min-width: 200px;
+    }
+
+    .dropdown-menu.active {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+      pointer-events: auto;
+    }
+
+    .dropdown-item {
+      padding: 8px 12px;
+      font-size: 13px;
+      color: #333;
+      cursor: pointer;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .dropdown-item:hover {
+      background-color: rgba(0, 0, 0, 0.05);
+    }
+
+    /* Monitor Pill Buttons */
+    .mon-btn {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 700;
+      color: #666;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .mon-btn:hover {
+      background-color: #f3f4f6;
+      color: #000;
+    }
+
+    .mon-btn.active {
+      background-color: #000;
+      color: #fff;
+    }
+
+    /* TOAST NOTIFICATIONS */
+    /* TOAST NOTIFICATIONS */
+    #toastContainer {
+      position: fixed;
+      top: 60px;
+      /* Below Title Bar (40px) + 20px padding */
+      right: 24px;
+      /* Reset bottom/left/transform */
+      bottom: auto;
+      left: auto;
+      transform: none;
+
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      z-index: 50000;
+      pointer-events: none;
+      align-items: flex-end;
+      /* Align right */
+    }
+
+    .toast {
+      background: rgba(18, 18, 18, 0.90);
+      /* Elegant dark */
+      color: white;
+      backdrop-filter: blur(16px);
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      /* Subtle border */
+      border-radius: 12px;
+      /* Less pill, more card-like elegant */
+      padding: 12px 20px;
+      min-width: 240px;
+      max-width: 380px;
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+      /* Left align text */
+      gap: 12px;
+      font-size: 13.5px;
+      font-weight: 500;
+      opacity: 0;
+      transform: translateY(-15px) scale(0.98);
+      /* Drop in from top */
+      transition: all 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+
+    /* Icons inside toast */
+    .toast svg {
+      flex-shrink: 0;
+    }
+  </style>
+</head>
+
+<body class="flex items-center justify-center min-h-screen bg-gray-100"
+  style="padding-top: 40px; box-sizing: border-box; overflow: hidden;">
+
+  <!-- Custom Title Bar -->
+  <div id="titleBar"
+    style="position: fixed; top: 0; left: 0; right: 0; height: 40px; background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(10px); display: flex; align-items: center; justify-content: space-between; padding: 0 16px; z-index: 10000; border-bottom: 1px solid rgba(0,0,0,0.05); -webkit-app-region: drag;">
+
+    <!-- Left: App Icon/Title + Menu -->
+    <div style="display: flex; align-items: center; gap: 16px;">
+      <div style="font-weight: bold; font-size: 14px; display: flex; align-items: center; gap: 8px;">
+        <!-- SVG Logo Placeholder -->
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="black">
+          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z" />
+        </svg>
+        Find Hymn
+      </div>
+
+      <!-- Menu Buttons -->
+      <div class="relative group">
+        <div id="btnConfig" class="menu-item"
+          style="-webkit-app-region: no-drag; cursor: pointer; font-size: 13px; color: #555; padding: 4px 8px; border-radius: 4px; transition: background 0.2s;">
+          Opciones</div>
+      </div>
+      <div class="relative group">
+        <div id="btnProjection" class="menu-item"
+          style="-webkit-app-region: no-drag; cursor: pointer; font-size: 13px; color: #555; padding: 4px 8px; border-radius: 4px; transition: background 0.2s;">
+          Proyección</div>
+      </div>
+      <div id="btnAbout" class="menu-item"
+        style="-webkit-app-region: no-drag; cursor: pointer; font-size: 13px; color: #555; padding: 4px 8px; border-radius: 4px; transition: background 0.2s;">
+        Acerca de</div>
+
+
+    </div>
+
+    <!-- Server Info Pill -->
+    <div id="serverPill" class="glass-pill"
+      style="display: flex; align-items: center; background: rgba(255, 255, 255, 0.5); backdrop-filter: blur(8px); border: 1px solid rgba(0, 0, 0, 0.08); border-radius: 9999px; height: 28px; padding: 0 4px; margin-right: 12px; margin-left: auto; -webkit-app-region: no-drag; box-shadow: 0 2px 6px rgba(0,0,0,0.03); transition: all 0.2s;">
+
+      <!-- IP Section -->
+      <div id="btnCopyIP" title="Copiar Dirección IP"
+        style="display: flex; align-items: center; gap: 6px; padding: 0 10px; cursor: pointer; border-right: 1px solid rgba(0,0,0,0.1); height: 100%;">
+        <!-- WiFi Icon -->
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round" color="#555">
+          <path d="M5 12.55a11 11 0 0 1 14.08 0"></path>
+          <path d="M1.42 9a16 16 0 0 1 21.16 0"></path>
+          <path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path>
+          <line x1="12" y1="20" x2="12.01" y2="20"></line>
+        </svg>
+        <span id="ipLabel"
+          style="font-size: 11px; font-weight: 600; color: #444; font-family: monospace;">---.---.--.--</span>
+      </div>
+
+      <!-- Monitor Controls (Buttons) -->
+      <!-- Monitor Section -->
+      <div style="display: flex; align-items: center; gap: 6px; padding: 0 6px; height: 100%;">
+        <!-- Monitor Icon -->
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round" color="#555">
+          <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+          <line x1="8" y1="21" x2="16" y2="21"></line>
+          <line x1="12" y1="17" x2="12" y2="21"></line>
+        </svg>
+
+        <!-- Buttons Container -->
+        <div id="monitorPillControls" style="display: flex; align-items: center; gap: 4px;">
+          <!-- JS populates here -->
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Keyword Pill -->
+    <div id="keywordPill"
+      style="display: none; align-items: center; background: #000; color: white; border-radius: 9999px; height: 28px; padding: 0 10px; margin-right: 12px; font-size: 11px; font-weight: 600; cursor: pointer; -webkit-app-region: no-drag; gap: 6px; box-shadow: 0 2px 6px rgba(0,0,0,0.1);">
+      <span style="opacity: 0.7; font-size: 10px; letter-spacing: 0.5px;">CLAVE:</span>
+      <span id="keywordContent" data-real="" data-hidden="true" style="letter-spacing: 2px;">••••</span>
+      <span id="keywordEye" style="display: flex; align-items: center;">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+          <circle cx="12" cy="12" r="3"></circle>
+        </svg>
+      </span>
+    </div>
+
+    <!-- Right: Window Controls (Native Overlay matches ~140px on Windows) -->
+    <!-- Increased spacer to prevent right-side overlap with native buttons -->
+    <div style="-webkit-app-region: no-drag; width: 140px; flex-shrink: 0;"></div>
+  </div>
+
+  <div id="mainContainer"
+    style="display: flex; flex-direction: column; align-items: center; width: 100%; max-width: 42rem; margin-top: 5vh; transition: all 0.5s ease-out; z-index: 10;">
+
+    <!-- Unified Top Row (Pill Design) -->
+    <div id="tabContainer"
+      style="display: flex; align-items: center; background-color: white; border-radius: 9999px; padding: 0.375rem; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); border: 1px solid #f3f4f6; margin-bottom: 1.5rem; gap: 0.5rem; opacity: 0; transition: opacity 0.2s;">
+
+      <!-- En Curso Toggle -->
+      <button id="liveButton"
+        style="padding: 0.5rem 1.25rem; border-radius: 9999px; font-size: 0.875rem; font-weight: 700; transition: all 0.2s; display: flex; align-items: center; gap: 0.5rem; color: #6b7280; background: transparent; white-space: nowrap; border: none; cursor: pointer;">
+        <span
+          style="width: 0.5rem; height: 0.5rem; border-radius: 9999px; background-color: currentColor; opacity: 0.5;"></span>
+        En curso
+      </button>
+
+      <div style="width: 1px; height: 1.25rem; background-color: #e5e7eb;"></div>
+
+      <!-- Navigation -->
+      <button id="tab-previous" class="tab-inactive"
+        style="padding: 0.5rem 1.25rem; border-radius: 9999px; font-size: 0.875rem; font-weight: 600; border: none; cursor: pointer; transition: all 0.2s;">
+        Anterior
+      </button>
+      <button id="tab-new" class="tab-active"
+        style="padding: 0.5rem 1.25rem; border-radius: 9999px; font-size: 0.875rem; font-weight: 600; border: none; cursor: pointer; transition: all 0.2s;">
+        Nuevo
+      </button>
+    </div>
+
+    <!-- Search Row -->
+    <div style="position: relative; width: 100%; padding-left: 1rem; padding-right: 1rem; padding-bottom: 0.5rem;">
+      <div
+        style="display: flex; align-items: center; width: 100%; background-color: white; padding: 0.5rem; border-radius: 1rem; box-shadow: 0 8px 30px rgba(0,0,0,0.12); border: 1px solid #f3f4f6; position: relative; z-index: 50;">
+
+        <!-- Search Input -->
+        <div style="position: relative; flex-grow: 1; display: flex; align-items: center;">
+          <div style="padding-left: 1rem; color: #9ca3af; display: flex; align-items: center;">
+            <svg width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+          </div>
+          <input type="text" id="searchInput"
+            style="width: 100%; padding-left: 0.75rem; padding-right: 2.5rem; padding-top: 0.5rem; padding-bottom: 0.5rem; font-size: 1.1rem; line-height: 1.5rem; color: #111827; border: none; outline: none; background: transparent; font-weight: 500;"
+            placeholder="Buscar himno..." autocomplete="off">
+
+          <!-- Clear Button -->
+          <button id="clearSearchButton" class="hidden"
+            style="position: absolute; right: 0.5rem; padding: 0.375rem; border-radius: 9999px; color: #9ca3af; background: transparent; border: none; cursor: pointer; display: none;">
+            <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <!-- Divider -->
+        <div style="height: 2.5rem; width: 1px; background-color: #e5e7eb; margin-left: 0.5rem; margin-right: 0.5rem;">
+        </div>
+
+        <!-- Category -->
+        <div id="categorySelect" style="position: relative; height: 100%;">
+          <button id="categoryButton"
+            style="height: 100%; display: flex; align-items: center; gap: 0.5rem; padding-left: 1rem; padding-right: 1rem; border-radius: 0.75rem; background: transparent; border: none;  color: #1f2937; font-weight: 700; font-size: 0.875rem; letter-spacing: 0.025em; cursor: pointer; transition: background-color 0.2s;">
+            <span id="categoryButtonText">CANTADO</span>
+            <svg width="16" height="16" color="#6b7280" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+              stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+
+          <!-- Dropdown -->
+          <div id="categoryOptions" class="menu-hidden"
+            style="position: absolute; right: 0; top: 100%; margin-top: 0.75rem; width: 10rem; background-color: white; border-radius: 0.75rem; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25); border: 1px solid #f3f4f6; overflow: hidden; z-index: 60;">
+
+            <div data-value="Cantado" class="category-option"
+              style="padding: 0.875rem 1.25rem; font-size: 0.875rem; font-weight: 700; color: #1f2937; border-bottom: 1px solid #f3f4f6; cursor: pointer; transition: background 0.1s;">
+              CANTADO
+            </div>
+            <div data-value="Pista" class="category-option"
+              style="padding: 0.875rem 1.25rem; font-size: 0.875rem; font-weight: 700; color: #1f2937; cursor: pointer; transition: background 0.1s;">
+              PISTA
+            </div>
+          </div>
+        </div>
+
+        <!-- Play Button -->
+        <div style="padding-left: 0.5rem;">
+          <button id="playButton"
+            style="background-color: black; color: white; padding: 0.875rem; border-radius: 0.75rem; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1); border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: transform 0.1s;">
+            <!-- Brand new simplified Play Icon -->
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M7 6v12l10-6z" fill="white" style="fill: white !important;" />
+            </svg>
+          </button>
+        </div>
+
+      </div>
+
+      <!-- Search Results Dropdown -->
+      <div id="results" class="results-hidden custom-results">
+      </div>
+
+    </div>
+  </div>
+
+
+
+  </div>
+
+  <!-- Footer Media Controls (Refactored) -->
+  <div id="mediaControls" class="app-footer">
+
+    <!-- PROGRESS BAR WRAPPER (To clip overflow shadow) -->
+    <div class="seek-wrapper">
+      <input id="playerSeek" type="range" min="0" max="100" value="0" class="custom-range">
+    </div>
+
+    <!-- LEFT GROUP: Toggle + Song Info -->
+    <div style="display: flex; align-items: center; gap: 16px; flex: 1; justify-content: flex-start;">
+      <!-- Compact Toggle -->
+      <button id="toggleCompact" title="Modo Compacto"
+        style="width: 32px; height: 32px; background: transparent; border: 1px solid #ddd; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; color: #666; transition: transform 0.3s; flex-shrink: 0;">
+        <svg id="iconCollapse" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z" />
+        </svg>
+        <svg id="iconExpand" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" style="display: none;">
+          <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z" />
+        </svg>
+      </button>
+
+      <!-- Song Info -->
+      <div id="playerSongInfo"
+        style="display: flex; flex-direction: column; overflow: hidden; justify-content: center;">
+        <span id="playerSongTitle"
+          style="font-weight: bold; color: black; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">-</span>
+        <span id="playerSongNumber" style="font-size: 12px; color: #555;">-</span>
+      </div>
+    </div>
+
+    <!-- CENTER GROUP: Playback Controls -->
+    <div style="flex: 1; display: flex; justify-content: center; align-items: center;">
+      <div style="display: flex; align-items: center; gap: 20px;">
+        <!-- Prev -->
+        <button id="playerPrev" style="background:none; border:none; cursor:pointer; color:#333;">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
+          </svg>
+        </button>
+
+        <!-- Play/Pause -->
+        <button id="playerPlayPause"
+          style="width: 48px; height: 48px; background: black; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; color: white; border: none; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+          <svg id="iconPlay" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" style="display: block;">
+            <path d="M8 5v14l11-7z" />
+          </svg>
+          <svg id="iconPause" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" style="display: none;">
+            <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
+          </svg>
+        </button>
+
+        <!-- Next -->
+        <button id="playerNext" style="background:none; border:none; cursor:pointer; color:#333;">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
+          </svg>
+        </button>
+
+        <!-- Loop -->
+        <button id="playerLoop"
+          style="background:none; border:none; cursor:pointer; color:#9ca3af; transition: color 0.2s;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+            <path
+              d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z" />
+          </svg>
+        </button>
+
+        <!-- Stop -->
+        <button id="playerStop" style="background:none; border:none; cursor:pointer; color:#333;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M6 6h12v12H6z" />
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- RIGHT GROUP: Time + Volume + Fullscreen -->
+    <div style="flex: 1; display: flex; justify-content: flex-end; align-items: center; gap: 16px;">
+
+      <!-- Time -->
+      <div style="font-family: monospace; font-size: 12px; color: #666; display: flex; gap: 4px;">
+        <span id="currentTime">0:00</span> / <span id="totalTime">0:00</span>
+      </div>
+
+      <!-- Volume -->
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" color="#666">
+          <path
+            d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
+        </svg>
+        <input id="playerVolume" type="range" min="0" max="100" value="100"
+          style="width: 80px; height: 4px; accent-color: #333; cursor: pointer;">
+      </div>
+
+      <button id="fullscreenButton" title="Pantalla Completa"
+        style="background: none; border: none; cursor: pointer; color: #333; padding: 4px;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z" />
+        </svg>
+      </button>
+    </div>
+  </div>
+
+
+
+  <!-- About Modal -->
+  <div id="aboutModal"
+    style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); backdrop-filter: blur(5px); z-index: 20000; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.3s ease;">
+    <div id="aboutModalCard"
+      style="background: white; padding: 24px; border-radius: 12px; width: 300px; text-align: center; box-shadow: 0 10px 25px rgba(0,0,0,0.2); transform: scale(0.9); transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);">
+      <h2 style="margin-top: 0; font-size: 18px; font-weight: bold;">Find Hymn</h2>
+      <p style="color: #666; font-size: 14px; margin: 8px 0;">Versión 2.0.1</p>
+      <div style="margin: 16px 0;">
+        <a href="#" id="githubLink" style="color: #4F46E5; text-decoration: none; font-weight: 500;">Github del
+          desarrollador</a>
+      </div>
+      <button id="closeAbout"
+        style="background: #eee; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 13px;">Cerrar</button>
+    </div>
+  </div>
+
+  <!-- Server Settings Modal -->
+  <div id="serverSettingsModal"
+    style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); backdrop-filter: blur(5px); z-index: 20050; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.3s ease;">
+    <div id="serverSettingsCard"
+      style="background: white; padding: 24px; border-radius: 12px; width: 320px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); transform: scale(0.9); transition: transform 0.3s ease;">
+      <h3 style="margin-top: 0; margin-bottom: 20px; font-size: 18px; font-weight: bold; color: #333;">Configurar
+        Servidor</h3>
+
+      <!-- PUERTO -->
+      <label style="display:block; font-size: 13px; font-weight: 500; color: #666; margin-bottom: 6px;">Puerto</label>
+      <input type="number" id="inputServerPort" value="3000"
+        style="width: 100%; border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; margin-bottom: 16px; outline: none;">
+
+      <!-- PALABRA CLAVE (AUTH) -->
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+        <label style="font-size: 13px; font-weight: 500; color: #666;">Palabra Clave Web</label>
+
+        <!-- Toggle Auth -->
+        <label class="switch">
+          <input type="checkbox" id="checkServerAuth">
+          <span class="slider round"></span>
+        </label>
+      </div>
+
+      <input type="text" id="inputServerKeyword" placeholder="Ej: damm2026" disabled
+        style="width: 100%; border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; margin-bottom: 24px; outline: none; transition: opacity 0.3s;">
+
+      <!-- ACTIONS -->
+      <div style="display: flex; gap: 10px; justify-content: flex-end;">
+        <button id="btnCancelServerSettings"
+          style="padding: 8px 16px; border: 1px solid #e5e7eb; background: white; border-radius: 8px; cursor: pointer; color: #666;">Cancelar</button>
+        <button id="btnSaveServerSettings"
+          style="padding: 8px 16px; border: none; background: #000; color: white; border-radius: 8px; cursor: pointer; font-weight: 500;">
+          Guardar
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script src="./renderer.js"></script>
+
+  <!-- Toast Container -->
+  <div id="toastContainer"></div>
+
+
+</body>
+
+</html>

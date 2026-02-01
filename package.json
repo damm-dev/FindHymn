@@ -1,0 +1,36 @@
+{
+  "name": "find_hymn_v2.0",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "electron .",
+    "build:css": "npx tailwindcss -i ./src/input.css -o ./public/styles.css --watch"
+  },
+  "build": {
+    "icon": "src/icono.png",
+    "files": [
+      "**/*",
+      "!videos/**"
+    ]
+  },
+  "keywords": [],
+  "author": "Anthony Meléndez",
+  "license": "ISC",
+  "description": "Aplicación del himnario Adventista del Séptimo día versiones 1962 y 2010",
+  "devDependencies": {
+    "autoprefixer": "^10.4.21",
+    "electron": "^37.2.0",
+    "electron-builder": "^26.0.12",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.17"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "electron-store": "^10.1.0",
+    "express": "^5.2.1",
+    "gsap": "^3.13.0",
+    "ip": "^2.0.1",
+    "socket.io": "^4.8.3",
+    "socket.io-client": "^4.8.3"
+  }
+}
