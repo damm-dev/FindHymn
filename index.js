@@ -75,9 +75,9 @@ function updateTray() {
     const { nativeTheme } = require('electron');
 
     // Resolve Absolute Paths for Icons
-    const iconWhite = path.join(__dirname, 'build/icon-white.ico');
-    const iconBlack = path.join(__dirname, 'build/icon-black.ico');
-    const defaultIcon = path.join(__dirname, 'build/icon.ico');
+    const iconWhite = path.join(__dirname, 'public/icons/icon-white.ico');
+    const iconBlack = path.join(__dirname, 'public/icons/icon-Black.ico');
+    const defaultIcon = path.join(__dirname, 'public/icons/icon.ico');
 
     const getThemeIcon = () => {
       // On Windows: Dark Taskbar usually means White Icon needed. Light Taskbar means Black Icon.

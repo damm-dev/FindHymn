@@ -1,17 +1,27 @@
 {
   "name": "find_hymn_v2.0",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "main": "index.js",
   "scripts": {
     "start": "electron .",
-    "build:css": "npx tailwindcss -i ./src/input.css -o ./public/styles.css --watch"
+    "build:css": "npx tailwindcss -i ./src/input.css -o ./public/styles.css --watch",
+    "dist": "electron-builder --win"
   },
   "build": {
-    "icon": "src/icono.png",
+    "appId": "com.damm.findhymn",
+    "productName": "FindHymn",
+    "icon": "build/icon.ico",
     "files": [
       "**/*",
       "!videos/**"
-    ]
+    ],
+    "win": {
+      "target": [
+        "portable",
+        "nsis"
+      ],
+      "icon": "build/icon.ico"
+    }
   },
   "keywords": [],
   "author": "Anthony Meléndez",
