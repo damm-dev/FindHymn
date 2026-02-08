@@ -219,6 +219,10 @@ app.on('activate', () => {
   if (!mainWin) createWindow();
 });
 
+ipcMain.on('restart-app', () => {
+  autoUpdater.quitAndInstall();
+});
+
 // ————— Auto-Updater —————
 autoUpdater.on('checking-for-update', () => {
   if (mainWin) mainWin.webContents.send('checking-for-update');

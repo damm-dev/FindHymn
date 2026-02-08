@@ -733,25 +733,41 @@ function closeServerSettings() {
   serverSettingsModal.classList.remove('active');
 }
 
-// Toast Notification Helper
-function showToast(message, type = 'success') {
+// Toast Notification Helper (Modified to support action)
+function showToast(message, type = 'info', action = null) {
   const container = document.getElementById('toastContainer');
   if (!container) return;
 
   const toast = document.createElement('div');
-  toast.className = `toast toast-${type}`;
+  toast.className = `toast ${type}`;
 
   // Icon based on type
-  let iconHTML = '';
-  if (type === 'success') {
-    iconHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
-  } else if (type === 'error') {
-    iconHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>`;
-  } else {
-    iconHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>`;
+  let icon = '';
+  if (type === 'success') icon = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" color="#4ade80"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+  else if (type === 'error') icon = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" color="#f87171"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>';
+  else icon = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" color="#60a5fa"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>';
+
+  toast.innerHTML = `
+    ${icon}
+    <div style="flex-grow:1;">${message}</div>
+  `;
+
+  if (action) {
+    const btn = document.createElement('button');
+    btn.textContent = action.label;
+    btn.style.marginLeft = '12px';
+    btn.style.padding = '4px 10px';
+    btn.style.borderRadius = '6px';
+    btn.style.border = '1px solid rgba(255,255,255,0.2)';
+    btn.style.background = 'rgba(255,255,255,0.1)';
+    btn.style.color = 'white';
+    btn.style.fontSize = '11px';
+    btn.style.cursor = 'pointer';
+    btn.style.fontWeight = 'bold';
+    btn.onclick = action.callback;
+    toast.appendChild(btn);
   }
 
-  toast.innerHTML = `${iconHTML}<span>${message}</span>`;
   container.appendChild(toast);
 
   // Animate In
@@ -813,9 +829,10 @@ ipcRenderer.on('update-error', (event, message) => {
 });
 
 ipcRenderer.on('update-downloaded', () => {
-  showToast("Actualización descargada. Reinicia para aplicar.", 'success');
-  // Optional: Add a button to restart
-  // For now, let's just use the toast.
+  showToast("Actualización lista.", 'success', {
+    label: "REINICIAR AHORA",
+    callback: () => ipcRenderer.send('restart-app')
+  });
 });
 
 function openAboutModal() {
