@@ -174,6 +174,11 @@ configMenu.innerHTML = `
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
   </div>
 
+  <div id="optCheckUpdates" class="dropdown-item">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3"/></svg>
+    Buscar actualizaciones
+  </div>
+
   <div id="optClearCache" class="dropdown-item">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
     Borrar Caché y Reiniciar
@@ -474,7 +479,7 @@ async function updateServerStatusPill() {
         if (keywordContent) {
           keywordContent.dataset.real = config.keyword;
           keywordContent.dataset.hidden = 'true';
-          keywordContent.textContent = '••••';
+          keywordContent.textContent = '•'.repeat(config.keyword.length);
         }
       } else {
         keywordPill.style.display = 'none';
@@ -500,7 +505,7 @@ if (keywordEye && keywordContent) {
       keywordContent.dataset.hidden = 'false';
       // Optional: Change Eye Icon
     } else {
-      keywordContent.textContent = '••••';
+      keywordContent.textContent = '•'.repeat(keywordContent.dataset.real.length);
       keywordContent.dataset.hidden = 'true';
     }
   });
@@ -532,7 +537,7 @@ if (keywordPill && keywordContent) {
         // Restore text based on state (which might have changed if user somehow clicked eye? No, propagation stopped)
         // Check current state just to be safe
         if (keywordContent.dataset.hidden === 'true') {
-          keywordContent.textContent = '••••';
+          keywordContent.textContent = '•'.repeat(keywordContent.dataset.real.length);
         } else {
           keywordContent.textContent = keywordContent.dataset.real;
         }
@@ -616,7 +621,15 @@ document.addEventListener('click', async (e) => {
   if (e.target.closest('#optServerRestart')) {
     serverSubMenu.classList.remove('active');
     configMenu.classList.remove('active');
+
+    // Visual feedback for restart
+    const switchInput = document.getElementById('serverToggleCheck');
+    if (switchInput) switchInput.checked = false;
+
     const success = await ipcRenderer.invoke('restart-server');
+
+    if (switchInput) switchInput.checked = success;
+
     if (success) showToast("Servidor reiniciado correctamente.", 'success');
     else showToast("Error al reiniciar el servidor.", 'error');
   }
@@ -648,6 +661,13 @@ document.addEventListener('click', async (e) => {
   if (e.target.id === 'checkStartWindows') {
     const isChecked = e.target.checked;
     await ipcRenderer.invoke('toggle-start-with-windows', isChecked);
+  }
+
+  // Option: Check for Updates
+  if (e.target.id === 'optCheckUpdates' || e.target.closest('#optCheckUpdates')) {
+    configMenu.classList.remove('active');
+    showToast("Buscando actualizaciones...", 'info');
+    ipcRenderer.send('check-for-updates');
   }
 
   // Option: Select Folder
@@ -706,18 +726,11 @@ async function openServerSettings() {
   }
   if (inputServerKeyword) inputServerKeyword.value = config.keyword || '';
 
-  serverSettingsModal.style.display = 'flex';
-  void serverSettingsModal.offsetWidth;
-  serverSettingsModal.style.opacity = '1';
-  serverSettingsCard.style.transform = 'scale(1)';
+  serverSettingsModal.classList.add('active');
 }
 
 function closeServerSettings() {
-  serverSettingsModal.style.opacity = '0';
-  serverSettingsCard.style.transform = 'scale(0.9)';
-  setTimeout(() => {
-    serverSettingsModal.style.display = 'none';
-  }, 300);
+  serverSettingsModal.classList.remove('active');
 }
 
 // Toast Notification Helper
@@ -781,35 +794,36 @@ async function saveServerSettings() {
 // 3. Acerca de
 const aboutModalCard = document.getElementById('aboutModalCard');
 
+// ————— Update Event Listeners —————
+ipcRenderer.on('checking-for-update', () => {
+  // We already show "Buscando..." on button click, but this handles auto-check too
+  // showToast("Buscando actualizaciones...", 'info'); 
+});
+
+ipcRenderer.on('update-available', () => {
+  showToast("Nueva actualización disponible. Descargando...", 'info');
+});
+
+ipcRenderer.on('update-not-available', () => {
+  showToast("La aplicación ya está actualizada.", 'success');
+});
+
+ipcRenderer.on('update-error', (event, message) => {
+  showToast(`Error al buscar actualizaciones: ${message}`, 'error');
+});
+
+ipcRenderer.on('update-downloaded', () => {
+  showToast("Actualización descargada. Reinicia para aplicar.", 'success');
+  // Optional: Add a button to restart
+  // For now, let's just use the toast.
+});
+
 function openAboutModal() {
-  aboutModal.style.display = 'flex';
-  // Trigger reflow
-  void aboutModal.offsetWidth;
-
-  // Add active styles (Fade In / Scale Up)
-  aboutModal.style.opacity = '1';
-  aboutModal.style.pointerEvents = 'auto'; // ensure clicks work
-
-  if (aboutModalCard) {
-    aboutModalCard.style.transform = 'scale(1)';
-    aboutModalCard.style.opacity = '1';
-  }
+  aboutModal.classList.add('active');
 }
 
 function closeAboutModal() {
-  // Fade Out / Scale Down
-  aboutModal.style.opacity = '0';
-  aboutModal.style.pointerEvents = 'none';
-
-  if (aboutModalCard) {
-    aboutModalCard.style.transform = 'scale(0.9)';
-    aboutModalCard.style.opacity = '0';
-  }
-
-  // Wait for transition duration (300ms matches CSS)
-  setTimeout(() => {
-    aboutModal.style.display = 'none';
-  }, 300);
+  aboutModal.classList.remove('active');
 }
 
 if (btnAbout) btnAbout.addEventListener('click', openAboutModal);

@@ -1,5 +1,6 @@
 // index.js
 const { app, BrowserWindow, ipcMain, dialog, screen, Tray, Menu } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs');
 const Store = require('electron-store').default;
@@ -120,7 +121,17 @@ function updateTray() {
 
   tray.on('click', () => {
     if (mainWin) {
-      mainWin.isVisible() ? mainWin.hide() : mainWin.show();
+      if (mainWin.isVisible()) {
+        if (mainWin.isMinimized()) {
+          mainWin.restore();
+          mainWin.focus();
+        } else {
+          mainWin.hide();
+        }
+      } else {
+        mainWin.show();
+        mainWin.focus();
+      }
     }
   });
 }
@@ -157,6 +168,9 @@ function createWindow() {
 
   // Initialize Tray based on config
   updateTray();
+
+  // Check for updates on startup
+  autoUpdater.checkForUpdatesAndNotify();
 
   // Close vs Minimize (Tray Logic)
   mainWin.on('close', (event) => {
@@ -203,6 +217,35 @@ app.on('window-all-closed', () => {
 });
 app.on('activate', () => {
   if (!mainWin) createWindow();
+});
+
+// ————— Auto-Updater —————
+autoUpdater.on('checking-for-update', () => {
+  if (mainWin) mainWin.webContents.send('checking-for-update');
+});
+
+autoUpdater.on('update-available', () => {
+  if (mainWin) mainWin.webContents.send('update-available');
+});
+
+autoUpdater.on('update-not-available', () => {
+  if (mainWin) mainWin.webContents.send('update-not-available');
+});
+
+autoUpdater.on('error', (err) => {
+  if (mainWin) mainWin.webContents.send('update-error', err.message);
+});
+
+autoUpdater.on('update-downloaded', () => {
+  if (mainWin) mainWin.webContents.send('update-downloaded');
+});
+
+ipcMain.on('check-for-updates', () => {
+  autoUpdater.checkForUpdatesAndNotify();
+});
+
+ipcMain.on('restart-app', () => {
+  autoUpdater.quitAndInstall();
 });
 
 function getBasePath() {
