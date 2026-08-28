@@ -52,9 +52,25 @@ const totalTimeSpan = document.getElementById('totalTime');
 
 let currentTab = 'previous';
 let currentCategory = 'Cantado';
+let selectedHymn = null; // { file, tab, category, display }
 let selectedFile = null;
 let liveActive = false;
 let isLooping = false; // New loop state
+let selectedResultIndex = -1;
+let currentResults = [];
+
+// Projection Preview Elements & State
+const projectionPreviewContainer = document.getElementById('projectionPreviewContainer');
+const previewVideo = document.getElementById('previewVideo');
+const previewWelcome = document.getElementById('previewWelcome');
+const btnMinimizePreview = document.getElementById('btnMinimizePreview');
+const btnClosePreview = document.getElementById('btnClosePreview');
+const iconMinPreview = document.getElementById('iconMinPreview');
+const iconMaxPreview = document.getElementById('iconMaxPreview');
+const previewHeaderTitle = document.getElementById('previewHeaderTitle');
+
+let isPreviewMinimized = false;
+let isPreviewVisible = false;
 
 // ------------- DROPDOWN MENU LOGIC -------------
 const configMenu = document.createElement('div');
@@ -172,6 +188,11 @@ configMenu.innerHTML = `
         Bandeja / Inicio
     </div>
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+  </div>
+
+  <div id="optTutorial" class="dropdown-item">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polygon points="10 8 16 12 10 16 10 8"></polygon></svg>
+    Tutorial
   </div>
 
   <div id="optCheckUpdates" class="dropdown-item">
@@ -406,17 +427,56 @@ if (btnConfig) {
 }
 
 // Setup Projection Button
-// Setup Projection Button
-// Refactored Monitor Loader
+// Refactored Monitor & Projection Loader
 async function openProjectionMenu(trigger) {
   toggleMenu(trigger, settingsMenu);
   if (settingsMenu.classList.contains('active')) {
-    // Load monitors (reuse existing logic)
+    // Clear and build menu options
+    settingsMenu.innerHTML = '';
+
+    // 1. Vista Previa Toggle Item
+    const checkHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+    const togglePreviewItem = document.createElement('div');
+    togglePreviewItem.className = 'dropdown-item';
+    togglePreviewItem.style.justifyContent = 'space-between';
+    togglePreviewItem.innerHTML = `
+      <div style="display:flex; gap:8px; align-items:center;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+        Vista previa en pantalla
+      </div>
+      <div style="width: 14px; display: flex; align-items: center; justify-content: center;">${isPreviewVisible ? checkHTML : ''}</div>
+    `;
+    togglePreviewItem.addEventListener('click', () => {
+      togglePreviewVisibility();
+      settingsMenu.classList.remove('active');
+    });
+    settingsMenu.appendChild(togglePreviewItem);
+
+    const separator = document.createElement('div');
+    separator.style.height = '1px';
+    separator.style.backgroundColor = '#eee';
+    separator.style.margin = '4px 0';
+    settingsMenu.appendChild(separator);
+
+    // 2. Monitores Title
+    const monitorTitle = document.createElement('div');
+    monitorTitle.style.padding = '6px 12px';
+    monitorTitle.style.fontSize = '11px';
+    monitorTitle.style.fontWeight = 'bold';
+    monitorTitle.style.color = '#888';
+    monitorTitle.style.textTransform = 'uppercase';
+    monitorTitle.textContent = 'MONITORES';
+    settingsMenu.appendChild(monitorTitle);
+
+    const monitorList = document.createElement('div');
+    monitorList.style.marginTop = '2px';
+    settingsMenu.appendChild(monitorList);
+
+    // Load monitors
     try {
       const result = await ipcRenderer.invoke('get-monitors');
       monitorList.innerHTML = '';
 
-      // Handle response format
       const list = result?.list || result || [];
       const selected = result?.selected || null;
 
@@ -442,8 +502,7 @@ async function openProjectionMenu(trigger) {
             socket.emit('status', { type: 'monitors-list', data: updated });
 
             settingsMenu.classList.remove('active');
-            updateMonitorPill(); // Sync local pill logic immediately!
-            updateMonitorPill(); // Sync local pill logic immediately!
+            updateMonitorPill();
           } catch (err) {
             console.error('Error setting monitor:', err);
           }
@@ -663,6 +722,12 @@ document.addEventListener('click', async (e) => {
     await ipcRenderer.invoke('toggle-start-with-windows', isChecked);
   }
 
+  // Option: Tutorial
+  if (e.target.id === 'optTutorial' || e.target.closest('#optTutorial')) {
+    configMenu.classList.remove('active');
+    openTutorialModal(0);
+  }
+
   // Option: Check for Updates
   if (e.target.id === 'optCheckUpdates' || e.target.closest('#optCheckUpdates')) {
     configMenu.classList.remove('active');
@@ -857,8 +922,365 @@ if (githubLink) {
   });
 }
 
+// ————— Interactive Spotlight Guided Tour Logic —————
+const tutorialSpotlightOverlay = document.getElementById('tutorialSpotlightOverlay');
+const spotlightHoleRect = document.getElementById('spotlightHoleRect');
+const spotlightRing = document.getElementById('spotlightRing');
+const spotlightCard = document.getElementById('spotlightCard');
+const spotlightStepBadge = document.getElementById('spotlightStepBadge');
+const spotlightTitle = document.getElementById('spotlightTitle');
+const spotlightBody = document.getElementById('spotlightBody');
+const spotlightDots = document.getElementById('spotlightDots');
+const btnSpotlightPrev = document.getElementById('btnSpotlightPrev');
+const btnSpotlightNext = document.getElementById('btnSpotlightNext');
+const btnExitSpotlight = document.getElementById('btnExitSpotlight');
+
+let currentSpotlightStep = 0;
+let spotlightTypeTimer = null;
+
+const spotlightSteps = [
+  {
+    badge: 'PASO 1 DE 8 • BÚSQUEDA Y ATAJOS',
+    title: 'Navegación con Teclado',
+    targetId: 'searchBoxWrapper',
+    body: `
+      <div style="display: flex; flex-direction: column; gap: 7px;">
+        <div style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #1e293b;">
+          <span style="background: #f1f5f9; border: 1px solid #cbd5e1; padding: 2px 6px; border-radius: 5px; font-weight: 800; font-size: 11px;">↑ / ↓</span>
+          <span><strong>Flechas:</strong> Muévete entre los resultados de búsqueda.</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #1e293b;">
+          <span style="background: #f1f5f9; border: 1px solid #cbd5e1; padding: 2px 6px; border-radius: 5px; font-weight: 800; font-size: 11px;">ENTER</span>
+          <span><strong>Doble Enter:</strong> 1º elige, 2º proyecta de inmediato.</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #1e293b;">
+          <span style="background: #f1f5f9; border: 1px solid #cbd5e1; padding: 2px 6px; border-radius: 5px; font-weight: 800; font-size: 11px;">ESC</span>
+          <span><strong>Escape:</strong> Borra la búsqueda al instante.</span>
+        </div>
+      </div>
+    `
+  },
+  {
+    badge: 'PASO 2 DE 8 • SERVIDOR MÓVIL',
+    title: 'Control desde el Celular',
+    targetId: 'btnCopyIP',
+    body: `
+      <div style="display: flex; flex-direction: column; gap: 7px; font-size: 13px; color: #334155;">
+        <div>Ingresa a esta <strong>dirección IP</strong> desde el navegador de tu celular (conectado al mismo Wi-Fi).</div>
+        <div style="background: #f8fafc; border: 1px solid #e2e8f0; padding: 7px 10px; border-radius: 8px; font-size: 12px; color: #1e293b;">
+          📱 <strong>Control Remoto:</strong> Busca y reproduce himnos directamente desde tu teléfono.
+        </div>
+      </div>
+    `
+  },
+  {
+    badge: 'PASO 3 DE 8 • PANTALLAS',
+    title: 'Elegir Monitor de Proyección',
+    targetId: 'monitorSelectorSection',
+    body: `
+      <div style="display: flex; flex-direction: column; gap: 7px; font-size: 13px; color: #334155;">
+        <div>Selecciona en qué pantalla o proyector se verá la letra:</div>
+        <div style="background: #f8fafc; border: 1px solid #e2e8f0; padding: 7px 10px; border-radius: 8px; font-size: 12px; color: #1e293b; line-height: 1.4;">
+          🖥️ <strong>Monitores (1, 2...):</strong> Haz clic en el número de monitor deseado para enviar la proyección automáticamente a esa pantalla.
+        </div>
+      </div>
+    `
+  },
+  {
+    badge: 'PASO 4 DE 8 • PROYECCIÓN',
+    title: 'Botón "En Curso"',
+    targetId: 'liveButton',
+    body: `
+      <div style="display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: #334155;">
+        <div>Abre o cierra la ventana de proyección:</div>
+        <div style="display: flex; align-items: center; gap: 6px; font-size: 12px;">
+          <span style="width: 8px; height: 8px; border-radius: 50%; background: #ef4444;"></span>
+          <span><strong>Rojo:</strong> Proyección activa y visible en la iglesia.</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 6px; font-size: 12px;">
+          <span style="width: 8px; height: 8px; border-radius: 50%; background: #9ca3af;"></span>
+          <span><strong>Gris:</strong> Proyección cerrada (haz clic para abrirla).</span>
+        </div>
+      </div>
+    `
+  },
+  {
+    badge: 'PASO 5 DE 8 • REPRODUCCIÓN',
+    title: 'Controles de Video',
+    targetId: 'playerPlayPause',
+    targetGroup: 'playback',
+    body: `
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; font-size: 12px; color: #334155;">
+        <div style="background: #f8fafc; border: 1px solid #e2e8f0; padding: 5px 8px; border-radius: 6px;"><strong>▶ / ⏸</strong> Play y Pausa</div>
+        <div style="background: #f8fafc; border: 1px solid #e2e8f0; padding: 5px 8px; border-radius: 6px;"><strong>⏮ / ⏭</strong> Anterior / Siguiente</div>
+        <div style="background: #f8fafc; border: 1px solid #e2e8f0; padding: 5px 8px; border-radius: 6px;"><strong>🔁</strong> Repetir en bucle</div>
+        <div style="background: #f8fafc; border: 1px solid #e2e8f0; padding: 5px 8px; border-radius: 6px;"><strong>⏹</strong> Detener video</div>
+      </div>
+    `
+  },
+  {
+    badge: 'PASO 6 DE 8 • PANTALLA COMPLETA',
+    title: 'Maximizar la Proyección',
+    targetId: 'fullscreenButton',
+    body: `
+      <div style="display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: #334155;">
+        <div style="background: #f8fafc; border: 1px solid #e2e8f0; padding: 8px 10px; border-radius: 8px; font-size: 12.5px; color: #0f172a; line-height: 1.45;">
+          <strong>⛶ Pantalla Completa:</strong> Maximiza o restaura la proyección con 1 solo clic desde tu barra, sin necesidad de mover el ratón a la pantalla de proyección.
+        </div>
+      </div>
+    `
+  },
+  {
+    badge: 'PASO 7 DE 8 • VISTA PREVIA',
+    title: 'Mini Monitor en Vivo',
+    targetId: 'btnOpenMiniPreview',
+    fallbackTargetId: 'projectionPreviewContainer',
+    body: `
+      <div style="display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: #334155;">
+        <div>Monitorea en tiempo real lo que se proyecta en la iglesia:</div>
+        <div style="background: #f8fafc; border: 1px solid #e2e8f0; padding: 7px 10px; border-radius: 8px; font-size: 12px; color: #1e293b; line-height: 1.4;">
+          • Haz clic en <strong>"Vista Previa"</strong> para abrir el monitor flotante.<br>
+          • Puedes arrastrarlo para moverlo, cambiar su tamaño o minimizarlo.
+        </div>
+      </div>
+    `
+  },
+  {
+    badge: 'PASO 8 DE 8 • ¡LISTO!',
+    title: '¡Todo Listo!',
+    targetId: 'btnConfig',
+    body: `
+      <div style="font-size: 13.5px; color: #1e293b; padding: 2px 0;">
+        Puedes volver a ver este tutorial en cualquier momento desde <strong style="color: #0f172a;">Opciones > Tutorial</strong>.
+      </div>
+    `
+  }
+];
+
+function openTutorialModal(step = 0) {
+  currentSpotlightStep = step;
+  if (tutorialSpotlightOverlay) tutorialSpotlightOverlay.style.display = 'block';
+  renderSpotlightStep(currentSpotlightStep);
+}
+
+function closeTutorialModal() {
+  if (tutorialSpotlightOverlay) tutorialSpotlightOverlay.style.display = 'none';
+  if (spotlightTypeTimer) clearTimeout(spotlightTypeTimer);
+  ipcRenderer.invoke('set-store-value', 'hasSeenTutorial_v2', true);
+
+  if (searchInput && searchInput.value) {
+    searchInput.value = '';
+    clearSearchResults();
+    updateClearButtonVisibility();
+  }
+}
+
+function renderSpotlightStep(step) {
+  if (step < 0) step = 0;
+  if (step >= spotlightSteps.length) step = spotlightSteps.length - 1;
+  currentSpotlightStep = step;
+
+  const data = spotlightSteps[step];
+  if (spotlightStepBadge) spotlightStepBadge.textContent = data.badge;
+  if (spotlightTitle) spotlightTitle.textContent = data.title;
+  if (spotlightBody) spotlightBody.innerHTML = data.body;
+
+  // Render Dots
+  if (spotlightDots) {
+    spotlightDots.innerHTML = '';
+    spotlightSteps.forEach((_, idx) => {
+      const dot = document.createElement('div');
+      dot.style.cssText = `width: ${idx === step ? '18px' : '6px'}; height: 6px; border-radius: 9999px; background: ${idx === step ? '#2563eb' : '#cbd5e1'}; transition: all 0.25s ease; cursor: pointer;`;
+      dot.onclick = () => renderSpotlightStep(idx);
+      spotlightDots.appendChild(dot);
+    });
+  }
+
+  // Buttons State
+  if (btnSpotlightPrev) {
+    btnSpotlightPrev.style.display = step === 0 ? 'none' : 'block';
+  }
+  if (btnSpotlightNext) {
+    if (step === spotlightSteps.length - 1) {
+      btnSpotlightNext.textContent = '¡Comenzar!';
+      btnSpotlightNext.style.background = '#16a34a';
+    } else {
+      btnSpotlightNext.textContent = 'Siguiente';
+      btnSpotlightNext.style.background = '#000000';
+    }
+  }
+
+  // Handle Target & Positioning
+  let targetEl = null;
+  if (data.targetId) {
+    targetEl = document.getElementById(data.targetId);
+    if (!isElementVisible(targetEl) && data.fallbackTargetId) {
+      const fallback = document.getElementById(data.fallbackTargetId);
+      if (isElementVisible(fallback)) {
+        targetEl = fallback;
+      }
+    }
+  }
+
+  // If group: e.g. center playback controls
+  if (data.targetGroup === 'playback') {
+    const prev = document.getElementById('playerPrev');
+    const stop = document.getElementById('playerStop');
+    if (prev && stop) {
+      targetEl = prev.parentElement || targetEl;
+    }
+  }
+
+  // Vista Previa: Ensure target is btnOpenMiniPreview if closed, or container if open
+  if (data.targetId === 'btnOpenMiniPreview') {
+    const btnPreview = document.getElementById('btnOpenMiniPreview');
+    const container = document.getElementById('projectionPreviewContainer');
+    if (isElementVisible(container)) {
+      targetEl = container;
+    } else if (btnPreview) {
+      targetEl = btnPreview;
+    }
+  }
+
+  // Keep search clean on step 0
+  if (step === 0 && searchInput) {
+    searchInput.value = '';
+    clearSearchResults();
+    updateClearButtonVisibility();
+  }
+
+  positionSpotlightOnElement(targetEl);
+}
+
+function isElementVisible(el) {
+  if (!el) return false;
+  if (el.classList && el.classList.contains('hidden')) return false;
+  const style = window.getComputedStyle(el);
+  if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+  const rect = el.getBoundingClientRect();
+  return rect.width > 0 && rect.height > 0;
+}
+
+function positionSpotlightOnElement(targetEl) {
+  if (!spotlightHoleRect || !spotlightRing || !spotlightCard) return;
+
+  if (!isElementVisible(targetEl)) {
+    // Center card, hide hole
+    spotlightHoleRect.setAttribute('width', '0');
+    spotlightHoleRect.setAttribute('height', '0');
+    spotlightRing.style.opacity = '0';
+
+    spotlightCard.style.top = '50%';
+    spotlightCard.style.left = '50%';
+    spotlightCard.style.transform = 'translate(-50%, -50%)';
+    return;
+  }
+
+  spotlightCard.style.transform = 'none';
+
+  let rect = targetEl.getBoundingClientRect();
+
+  const pad = 6;
+  const x = Math.max(4, rect.left - pad);
+  const y = Math.max(4, rect.top - pad);
+  const w = rect.width + pad * 2;
+  const h = rect.height + pad * 2;
+
+  // Set SVG hole
+  spotlightHoleRect.setAttribute('x', x.toString());
+  spotlightHoleRect.setAttribute('y', y.toString());
+  spotlightHoleRect.setAttribute('width', w.toString());
+  spotlightHoleRect.setAttribute('height', h.toString());
+  spotlightHoleRect.setAttribute('rx', '14');
+
+  // Set Ring
+  spotlightRing.style.opacity = '1';
+  spotlightRing.style.left = `${x}px`;
+  spotlightRing.style.top = `${y}px`;
+  spotlightRing.style.width = `${w}px`;
+  spotlightRing.style.height = `${h}px`;
+
+  // Position Card
+  const cardW = 380;
+  const cardH = spotlightCard.offsetHeight || 190;
+  const winW = window.innerWidth;
+  const winH = window.innerHeight;
+
+  let cardLeft = Math.max(16, Math.min(x + w / 2 - cardW / 2, winW - cardW - 16));
+  let cardTop = y + h + 14;
+
+  // If in top bar / header (near top), position below and align
+  if (y < 90) {
+    cardTop = y + h + 14;
+    if (x > winW / 2) {
+      cardLeft = Math.max(16, Math.min(x + w - cardW, winW - cardW - 16));
+    } else {
+      cardLeft = Math.max(16, Math.min(x, winW - cardW - 16));
+    }
+  } else if (cardTop + cardH > winH - 20) {
+    // If near bottom, place above
+    cardTop = Math.max(16, y - cardH - 14);
+  }
+
+  spotlightCard.style.left = `${cardLeft}px`;
+  spotlightCard.style.top = `${cardTop}px`;
+}
+
+if (btnSpotlightPrev) {
+  btnSpotlightPrev.addEventListener('click', () => {
+    if (currentSpotlightStep > 0) renderSpotlightStep(currentSpotlightStep - 1);
+  });
+}
+
+if (btnSpotlightNext) {
+  btnSpotlightNext.addEventListener('click', () => {
+    if (currentSpotlightStep < spotlightSteps.length - 1) {
+      renderSpotlightStep(currentSpotlightStep + 1);
+    } else {
+      closeTutorialModal();
+    }
+  });
+}
+
+if (btnExitSpotlight) {
+  btnExitSpotlight.addEventListener('click', closeTutorialModal);
+}
+
+// Window resize repositioning
+window.addEventListener('resize', () => {
+  if (tutorialSpotlightOverlay && tutorialSpotlightOverlay.style.display === 'block') {
+    renderSpotlightStep(currentSpotlightStep);
+  }
+});
+
+// Keyboard navigation support for spotlight tour
+window.addEventListener('keydown', (e) => {
+  if (tutorialSpotlightOverlay && tutorialSpotlightOverlay.style.display === 'block') {
+    if (e.key === 'Escape' && currentSpotlightStep > 0) {
+      closeTutorialModal();
+    } else if (e.key === 'ArrowRight' && currentSpotlightStep > 0) {
+      if (currentSpotlightStep < spotlightSteps.length - 1) {
+        renderSpotlightStep(currentSpotlightStep + 1);
+      }
+    } else if (e.key === 'ArrowLeft' && currentSpotlightStep > 0) {
+      renderSpotlightStep(currentSpotlightStep - 1);
+    }
+  }
+});
+
+// Auto-launch tutorial on first update/run
+(async () => {
+  try {
+    const hasSeen = await ipcRenderer.invoke('get-store-value', 'hasSeenTutorial_v2');
+    if (!hasSeen) {
+      setTimeout(() => {
+        openTutorialModal(0);
+      }, 700);
+    }
+  } catch (e) {}
+})();
+
 // Old menu logic removed
-// document.body.appendChild(settingsMenu); removed (it's reused above)
 if (!document.getElementById('projectionMenu')) {
   document.body.appendChild(settingsMenu);
 }
@@ -892,94 +1314,490 @@ liveButton.addEventListener('click', () => {
   ipcRenderer.invoke('toggle-live', !liveActive);
 });
 
-// Listener for SEARCH Enter
-searchInput.addEventListener('input', () => {
-  // Show/Hide clear button
-  if (searchInput.value) {
-    clearSearchButton.classList.remove('hidden');
+// ————— Live Projection Preview (Direct Window Capture & Draggable) —————
+let previewStream = null;
+let isDraggingPreview = false;
+let dragStartX = 0, dragStartY = 0, initialLeft = 0, initialTop = 0;
+
+const btnOpenMiniPreview = document.getElementById('btnOpenMiniPreview');
+
+function updatePreviewContainerUI() {
+  if (!projectionPreviewContainer) return;
+  if (isPreviewVisible) {
+    projectionPreviewContainer.classList.remove('hidden');
+    if (btnOpenMiniPreview) btnOpenMiniPreview.style.display = 'none';
+    startWindowCapture();
   } else {
-    clearSearchButton.classList.add('hidden');
+    projectionPreviewContainer.classList.add('hidden');
+    if (btnOpenMiniPreview) btnOpenMiniPreview.style.display = 'flex';
+    stopWindowCapture();
   }
-});
 
-clearSearchButton.addEventListener('click', () => {
-  searchInput.value = '';
-  clearSearchButton.classList.add('hidden');
-  clearSearchResults();
-  searchInput.focus();
-});
-
-
-// Keyboard Navigation State
-let selectedResultIndex = -1;
-
-// Listener for Search Input Navigation & Enter
-searchInput.addEventListener('keydown', (e) => {
-  const resultItems = resultsDiv.querySelectorAll('.search-result-item');
-  // Allow navigation even if list is empty if we want to handle other keys? No.
-  if (resultItems.length === 0 && e.key !== 'Enter') return;
-
-  if (e.key === 'ArrowDown') {
-    e.preventDefault();
-    if (resultItems.length > 0) {
-      selectedResultIndex = (selectedResultIndex + 1) % resultItems.length;
-      updateSelection(resultItems);
-    }
-  } else if (e.key === 'ArrowUp') {
-    e.preventDefault();
-    if (resultItems.length > 0) {
-      selectedResultIndex = (selectedResultIndex - 1 + resultItems.length) % resultItems.length;
-      updateSelection(resultItems);
-    }
-  } else if (e.key === 'Enter') {
-    e.preventDefault();
-    if (selectedResultIndex !== -1 && resultItems[selectedResultIndex]) {
-      resultItems[selectedResultIndex].click(); // Select it
-      playButton.click(); // Trigger Play logic
-    } else if (resultItems.length > 0) {
-      // Automatic first selection if none selected
-      resultItems[0].click();
-      playButton.click();
-    } else if (selectedFile) {
-      // Just play/replay if already selected
-      playButton.click();
-    }
+  if (isPreviewMinimized) {
+    projectionPreviewContainer.classList.add('minimized');
+    if (iconMinPreview) iconMinPreview.style.display = 'none';
+    if (iconMaxPreview) iconMaxPreview.style.display = 'block';
+  } else {
+    projectionPreviewContainer.classList.remove('minimized');
+    if (iconMinPreview) iconMinPreview.style.display = 'block';
+    if (iconMaxPreview) iconMaxPreview.style.display = 'none';
   }
-});
+}
 
-function updateSelection(items) {
-  items.forEach((item, index) => {
-    if (index === selectedResultIndex) {
-      item.style.backgroundColor = '#f3f4f6'; // Highlight
-      item.scrollIntoView({ block: 'nearest' });
-    } else {
-      item.style.backgroundColor = '';
-    }
+function togglePreviewMinimize() {
+  isPreviewMinimized = !isPreviewMinimized;
+  updatePreviewContainerUI();
+  ipcRenderer.invoke('set-store-value', 'previewMinimized', isPreviewMinimized);
+}
+
+function togglePreviewVisibility(visible) {
+  isPreviewVisible = (visible !== undefined) ? visible : !isPreviewVisible;
+  updatePreviewContainerUI();
+  ipcRenderer.invoke('set-store-value', 'previewVisible', isPreviewVisible);
+}
+
+if (btnMinimizePreview) btnMinimizePreview.addEventListener('click', togglePreviewMinimize);
+if (previewHeaderTitle) previewHeaderTitle.addEventListener('dblclick', togglePreviewMinimize);
+if (btnClosePreview) btnClosePreview.addEventListener('click', () => togglePreviewVisibility(false));
+if (btnOpenMiniPreview) btnOpenMiniPreview.addEventListener('click', () => togglePreviewVisibility(true));
+
+// Draggable & Resizable functionality
+let isResizingPreview = false;
+let resizeDirection = null; // 'right' or 'left'
+let resizeStartX = 0, resizeStartWidth = 0, resizeInitialLeft = 0;
+
+const previewHeader = document.getElementById('previewHeader');
+if (previewHeader) {
+  previewHeader.addEventListener('mousedown', (e) => {
+    if (e.target.closest('button')) return;
+    isDraggingPreview = true;
+    previewHeader.style.cursor = 'grabbing';
+
+    const rect = projectionPreviewContainer.getBoundingClientRect();
+    dragStartX = e.clientX;
+    dragStartY = e.clientY;
+    initialLeft = rect.left;
+    initialTop = rect.top;
+
+    projectionPreviewContainer.style.right = 'auto';
+    projectionPreviewContainer.style.bottom = 'auto';
+    projectionPreviewContainer.style.left = `${initialLeft}px`;
+    projectionPreviewContainer.style.top = `${initialTop}px`;
   });
 }
 
-ipcRenderer.on('video-window-opened', () => setLiveButtonState(true));
-ipcRenderer.on('video-window-closed', () => {
-  setLiveButtonState(false);
-  // mediaControls.style.display = 'none'; // KEEP VISIBLE per request
+// Corner Resize Handles
+const previewResizeHandleRight = document.getElementById('previewResizeHandleRight');
+const previewResizeHandleLeft = document.getElementById('previewResizeHandleLeft');
+
+if (previewResizeHandleRight) {
+  previewResizeHandleRight.addEventListener('mousedown', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    isResizingPreview = true;
+    resizeDirection = 'right';
+    resizeStartX = e.clientX;
+    resizeStartWidth = projectionPreviewContainer.offsetWidth;
+    const rect = projectionPreviewContainer.getBoundingClientRect();
+    projectionPreviewContainer.style.right = 'auto';
+    projectionPreviewContainer.style.bottom = 'auto';
+    projectionPreviewContainer.style.left = `${rect.left}px`;
+    projectionPreviewContainer.style.top = `${rect.top}px`;
+  });
+}
+
+if (previewResizeHandleLeft) {
+  previewResizeHandleLeft.addEventListener('mousedown', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    isResizingPreview = true;
+    resizeDirection = 'left';
+    resizeStartX = e.clientX;
+    resizeStartWidth = projectionPreviewContainer.offsetWidth;
+    const rect = projectionPreviewContainer.getBoundingClientRect();
+    resizeInitialLeft = rect.left;
+    projectionPreviewContainer.style.right = 'auto';
+    projectionPreviewContainer.style.bottom = 'auto';
+    projectionPreviewContainer.style.left = `${rect.left}px`;
+    projectionPreviewContainer.style.top = `${rect.top}px`;
+  });
+}
+
+window.addEventListener('mousemove', (e) => {
+  if (isResizingPreview && projectionPreviewContainer) {
+    const deltaX = e.clientX - resizeStartX;
+    const minW = 200;
+    const maxW = Math.min(window.innerWidth - 30, 900);
+
+    if (resizeDirection === 'right') {
+      const newWidth = Math.max(minW, Math.min(resizeStartWidth + deltaX, maxW));
+      projectionPreviewContainer.style.width = `${newWidth}px`;
+    } else if (resizeDirection === 'left') {
+      const newWidth = Math.max(minW, Math.min(resizeStartWidth - deltaX, maxW));
+      const adjustedLeft = resizeInitialLeft - (newWidth - resizeStartWidth);
+      if (adjustedLeft >= 10) {
+        projectionPreviewContainer.style.left = `${adjustedLeft}px`;
+      }
+      projectionPreviewContainer.style.width = `${newWidth}px`;
+    }
+    return;
+  }
+
+  if (!isDraggingPreview || !projectionPreviewContainer) return;
+  const deltaX = e.clientX - dragStartX;
+  const deltaY = e.clientY - dragStartY;
+
+  let newLeft = initialLeft + deltaX;
+  let newTop = initialTop + deltaY;
+
+  const containerWidth = projectionPreviewContainer.offsetWidth;
+  const containerHeight = projectionPreviewContainer.offsetHeight;
+  const maxLeft = window.innerWidth - containerWidth - 10;
+  const maxTop = window.innerHeight - containerHeight - 60;
+
+  newLeft = Math.max(10, Math.min(newLeft, maxLeft));
+  newTop = Math.max(45, Math.min(newTop, maxTop));
+
+  projectionPreviewContainer.style.left = `${newLeft}px`;
+  projectionPreviewContainer.style.top = `${newTop}px`;
 });
 
-playButton.addEventListener('click', () => {
-  if (selectedFile) {
-    ipcRenderer.invoke('play', {
-      file: selectedFile,
-      tab: currentTab,
-      category: currentCategory
+window.addEventListener('mouseup', () => {
+  if (isResizingPreview && projectionPreviewContainer) {
+    isResizingPreview = false;
+    resizeDirection = null;
+    ipcRenderer.invoke('set-store-value', 'previewWidth', projectionPreviewContainer.offsetWidth);
+    ipcRenderer.invoke('set-store-value', 'previewPosition', {
+      top: projectionPreviewContainer.style.top,
+      left: projectionPreviewContainer.style.left
     });
-    // Update player info from search input or known selection
-    // The search input usually holds the display string when a file is selected
-    if (searchInput.value) {
-      updateSongInfo(searchInput.value);
+  }
+
+  if (isDraggingPreview && projectionPreviewContainer) {
+    isDraggingPreview = false;
+    if (previewHeader) previewHeader.style.cursor = 'grab';
+    ipcRenderer.invoke('set-store-value', 'previewPosition', {
+      top: projectionPreviewContainer.style.top,
+      left: projectionPreviewContainer.style.left
+    });
+  }
+});
+
+// Auto-clamp preview container position within viewport bounds
+function clampPreviewPosition() {
+  if (!projectionPreviewContainer) return;
+
+  const containerWidth = projectionPreviewContainer.offsetWidth || 320;
+  const containerHeight = projectionPreviewContainer.offsetHeight || 240;
+
+  const minLeft = 10;
+  const minTop = 45;
+  const maxLeft = Math.max(minLeft, window.innerWidth - containerWidth - 10);
+  const maxTop = Math.max(minTop, window.innerHeight - containerHeight - 60);
+
+  if (containerWidth > window.innerWidth - 20) {
+    const newWidth = Math.max(200, window.innerWidth - 30);
+    projectionPreviewContainer.style.width = `${newWidth}px`;
+  }
+
+  const rect = projectionPreviewContainer.getBoundingClientRect();
+  let currentLeft = rect.left;
+  let currentTop = rect.top;
+
+  let clamped = false;
+  if (currentLeft > maxLeft) {
+    currentLeft = maxLeft;
+    clamped = true;
+  }
+  if (currentLeft < minLeft) {
+    currentLeft = minLeft;
+    clamped = true;
+  }
+  if (currentTop > maxTop) {
+    currentTop = maxTop;
+    clamped = true;
+  }
+  if (currentTop < minTop) {
+    currentTop = minTop;
+    clamped = true;
+  }
+
+  projectionPreviewContainer.style.right = 'auto';
+  projectionPreviewContainer.style.bottom = 'auto';
+  projectionPreviewContainer.style.left = `${currentLeft}px`;
+  projectionPreviewContainer.style.top = `${currentTop}px`;
+}
+
+// Keep preview container in-bounds on window resize
+window.addEventListener('resize', () => {
+  clampPreviewPosition();
+});
+
+// Load and restore preview state on startup
+(async () => {
+  try {
+    const savedPos = await ipcRenderer.invoke('get-store-value', 'previewPosition');
+    const savedWidth = await ipcRenderer.invoke('get-store-value', 'previewWidth');
+    const savedMin = await ipcRenderer.invoke('get-store-value', 'previewMinimized');
+    const savedVis = await ipcRenderer.invoke('get-store-value', 'previewVisible');
+
+    if (savedVis !== undefined && savedVis !== null) isPreviewVisible = savedVis;
+    if (savedMin !== undefined && savedMin !== null) isPreviewMinimized = savedMin;
+    if (savedWidth && projectionPreviewContainer) {
+      projectionPreviewContainer.style.width = `${savedWidth}px`;
+    }
+    if (savedPos && savedPos.left && savedPos.top && projectionPreviewContainer) {
+      projectionPreviewContainer.style.right = 'auto';
+      projectionPreviewContainer.style.bottom = 'auto';
+      projectionPreviewContainer.style.left = savedPos.left;
+      projectionPreviewContainer.style.top = savedPos.top;
+    }
+    clampPreviewPosition();
+    updatePreviewContainerUI();
+  } catch (e) {
+    console.warn("Could not load preview settings:", e);
+  }
+})();
+
+// Direct window stream capture
+async function startWindowCapture() {
+  if (!isPreviewVisible) return;
+  try {
+    const sourceId = await ipcRenderer.invoke('get-video-source-id');
+    if (!sourceId) {
+      stopWindowCapture();
+      return;
+    }
+
+    if (previewStream) {
+      previewStream.getTracks().forEach(t => t.stop());
+      previewStream = null;
+    }
+
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: {
+        mandatory: {
+          chromeMediaSource: 'desktop',
+          chromeMediaSourceId: sourceId,
+          minWidth: 320,
+          maxWidth: 1280,
+          minHeight: 180,
+          maxHeight: 720,
+          maxFrameRate: 30
+        }
+      }
+    });
+
+    previewStream = stream;
+    if (previewVideo) {
+      previewVideo.srcObject = stream;
+      previewVideo.style.display = 'block';
+      if (previewWelcome) previewWelcome.style.display = 'none';
+      previewVideo.onloadedmetadata = () => {
+        if (previewVideo.videoWidth && previewVideo.videoHeight) {
+          const wrapper = document.getElementById('previewContentWrapper');
+          if (wrapper) {
+            wrapper.style.aspectRatio = `${previewVideo.videoWidth} / ${previewVideo.videoHeight}`;
+          }
+        }
+      };
+      const p = previewVideo.play();
+      if (p !== undefined) p.catch(() => {});
+    }
+  } catch (err) {
+    console.warn("Could not capture projection window stream:", err);
+    stopWindowCapture();
+  }
+}
+
+function stopWindowCapture() {
+  if (previewStream) {
+    previewStream.getTracks().forEach(t => t.stop());
+    previewStream = null;
+  }
+  if (previewVideo) {
+    previewVideo.srcObject = null;
+    previewVideo.style.display = 'none';
+  }
+  if (previewWelcome) {
+    previewWelcome.style.display = 'flex';
+  }
+}
+
+if (previewWelcome) {
+  previewWelcome.addEventListener('click', () => {
+    ipcRenderer.invoke('toggle-live', true);
+  });
+}
+
+// ————— Hymn Selection & Playback Helpers —————
+function selectHymn(item) {
+  if (!item) return;
+  selectedHymn = {
+    file: item.file,
+    tab: item.tab || currentTab,
+    category: item.category || currentCategory,
+    display: item.display
+  };
+  selectedFile = item.file;
+  searchInput.value = item.display;
+  updateSongInfo(item.display);
+  clearSearchResults();
+  updateClearButtonVisibility();
+}
+
+async function playSelectedHymn() {
+  if (!selectedHymn && !selectedFile) {
+    const q = searchInput.value.trim();
+    if (q) {
+      const items = await ipcRenderer.invoke('search', {
+        query: q,
+        tab: currentTab,
+        category: currentCategory
+      });
+      if (items && items.length > 0) {
+        selectHymn(items[0]);
+      }
+    }
+  }
+
+  const hymnToPlay = selectedHymn || (selectedFile ? {
+    file: selectedFile,
+    tab: currentTab,
+    category: currentCategory,
+    display: searchInput.value || selectedFile
+  } : null);
+
+  if (!hymnToPlay || !hymnToPlay.file) {
+    showToast("Por favor selecciona un himno primero", 'info');
+    return;
+  }
+
+  try {
+    const res = await ipcRenderer.invoke('play', {
+      file: hymnToPlay.file,
+      tab: hymnToPlay.tab || currentTab,
+      category: hymnToPlay.category || currentCategory
+    });
+
+    if (res && res.success) {
+      updateSongInfo(hymnToPlay.display || searchInput.value || hymnToPlay.file);
+    } else if (res && !res.success) {
+      showToast(res.error || "No se pudo reproducir el himno", 'error');
+    }
+  } catch (err) {
+    console.error("Error al reproducir himno:", err);
+    showToast(`Error al reproducir: ${err.message}`, 'error');
+  }
+}
+
+function updateSelectionVisuals() {
+  const resultItems = resultsDiv.querySelectorAll('.search-result-item');
+  resultItems.forEach((item, index) => {
+    if (index === selectedResultIndex) {
+      item.style.backgroundColor = 'black';
+      item.style.color = 'white';
+      item.style.paddingLeft = '1.5rem';
+      item.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    } else {
+      item.style.backgroundColor = 'transparent';
+      item.style.color = '#1f2937';
+      item.style.paddingLeft = '1.0rem';
+    }
+  });
+
+  if (typeof currentSpotlightStep !== 'undefined' && currentSpotlightStep === 0 && typeof positionSpotlightOnElement === 'function' && typeof searchInput !== 'undefined') {
+    positionSpotlightOnElement(searchInput);
+  }
+}
+
+// Listener for Search Input Navigation & Enter (2-step flow)
+searchInput.addEventListener('keydown', (e) => {
+  const isResultsOpen = resultsDiv.classList.contains('active-results') && currentResults.length > 0;
+  const resultItems = resultsDiv.querySelectorAll('.search-result-item');
+
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    if (isResultsOpen && resultItems.length > 0) {
+      selectedResultIndex = (selectedResultIndex + 1) % resultItems.length;
+      updateSelectionVisuals();
+    } else if (!isResultsOpen && searchInput.value.trim()) {
+      doSearch();
+    }
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    if (isResultsOpen && resultItems.length > 0) {
+      selectedResultIndex = (selectedResultIndex - 1 + resultItems.length) % resultItems.length;
+      updateSelectionVisuals();
+    }
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    if (isResultsOpen) {
+      // 1er ENTER: Seleccionar / Elegir el himno de los resultados
+      const indexToSelect = selectedResultIndex >= 0 ? selectedResultIndex : 0;
+      if (currentResults[indexToSelect]) {
+        selectHymn(currentResults[indexToSelect]);
+        // El himno queda seleccionado y la lista cerrada.
+        // El próximo Enter reproducirá directamente.
+      }
+    } else {
+      // 2do ENTER: Reproducir el himno seleccionado (o el texto actual)
+      playSelectedHymn();
+    }
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    searchInput.value = '';
+    selectedHymn = null;
+    selectedFile = null;
+    clearSearchResults();
+    updateClearButtonVisibility();
+    searchInput.focus();
+  }
+});
+
+// Global Escape shortcut to easily clear search from anywhere
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    const activeModal = document.querySelector('.modal-overlay.active');
+    if (activeModal) return;
+
+    const activeDropdown = document.querySelector('.dropdown-menu.active');
+    if (activeDropdown) {
+      activeDropdown.classList.remove('active');
+      return;
+    }
+
+    if (categoryOptions && categoryOptions.classList.contains('active-menu')) {
+      categoryOptions.classList.remove('active-menu');
+      return;
+    }
+
+    if (searchInput.value || resultsDiv.classList.contains('active-results') || selectedHymn) {
+      searchInput.value = '';
+      selectedHymn = null;
+      selectedFile = null;
+      clearSearchResults();
+      updateClearButtonVisibility();
+      searchInput.focus();
     }
   }
 });
 
-// Init UI: Load persistent tab
+ipcRenderer.on('video-window-opened', () => {
+  setLiveButtonState(true);
+  startWindowCapture();
+});
+ipcRenderer.on('video-window-closed', () => {
+  setLiveButtonState(false);
+  stopWindowCapture();
+});
+
+playButton.addEventListener('click', () => {
+  playSelectedHymn();
+});
+
+// Init UI: Load persistent tab & preview settings
 (async () => {
   const savedTab = await ipcRenderer.invoke('get-store-value', 'lastTab');
   if (savedTab === 'new' || savedTab === 'previous') {
@@ -990,9 +1808,27 @@ playButton.addEventListener('click', () => {
   // Set initial display of categorySelect based on loaded tab
   categorySelect.style.display = currentTab === 'previous' ? 'none' : 'block';
 
-  // Fade in the tabs now that state is steady
-  const tabContainer = document.getElementById('tabContainer');
-  if (tabContainer) tabContainer.style.opacity = '1';
+  // Load persistent preview settings, size & position
+  const savedVis = await ipcRenderer.invoke('get-store-value', 'previewVisible');
+  if (savedVis !== undefined && savedVis !== null) isPreviewVisible = savedVis;
+  const savedMin = await ipcRenderer.invoke('get-store-value', 'previewMinimized');
+  if (savedMin !== undefined && savedMin !== null) isPreviewMinimized = savedMin;
+
+  const savedWidth = await ipcRenderer.invoke('get-store-value', 'previewWidth');
+  if (savedWidth && typeof savedWidth === 'number' && savedWidth >= 200 && projectionPreviewContainer) {
+    projectionPreviewContainer.style.width = `${savedWidth}px`;
+  }
+
+  const savedPos = await ipcRenderer.invoke('get-store-value', 'previewPosition');
+  if (savedPos && savedPos.top && savedPos.left && projectionPreviewContainer) {
+    projectionPreviewContainer.style.right = 'auto';
+    projectionPreviewContainer.style.bottom = 'auto';
+    projectionPreviewContainer.style.left = savedPos.left;
+    projectionPreviewContainer.style.top = savedPos.top;
+  }
+
+  updatePreviewContainerUI();
+  startWindowCapture();
 })();
 
 function updateTabVisuals() {
@@ -1017,8 +1853,8 @@ tabPrevious.addEventListener('click', async () => {
   categorySelect.style.display = 'none';
   ipcRenderer.invoke('set-store-value', 'lastTab', 'previous'); // Save
 
-  // Update input value and selectedFile based on current key
-  const keyMatch = searchInput.value.match(/^(\d{3})/);
+  // Update input value and selectedHymn based on current key
+  const keyMatch = searchInput.value.match(/^(\d{1,4})/);
   if (keyMatch) {
     const key = keyMatch[1];
     const items = await ipcRenderer.invoke('search', {
@@ -1026,9 +1862,8 @@ tabPrevious.addEventListener('click', async () => {
       tab: currentTab,
       category: currentCategory
     });
-    if (items.length > 0) {
-      searchInput.value = items[0].display;
-      selectedFile = items[0].file;
+    if (items && items.length > 0) {
+      selectHymn(items[0]);
     }
   }
   clearSearchResults();
@@ -1041,8 +1876,8 @@ tabNew.addEventListener('click', async () => {
   categorySelect.style.display = 'block';
   ipcRenderer.invoke('set-store-value', 'lastTab', 'new'); // Save
 
-  // Update input value and selectedFile based on current key
-  const keyMatch = searchInput.value.match(/^(\d{3})/);
+  // Update input value and selectedHymn based on current key
+  const keyMatch = searchInput.value.match(/^(\d{1,4})/);
   if (keyMatch) {
     const key = keyMatch[1];
     const items = await ipcRenderer.invoke('search', {
@@ -1050,9 +1885,8 @@ tabNew.addEventListener('click', async () => {
       tab: currentTab,
       category: currentCategory
     });
-    if (items.length > 0) {
-      searchInput.value = items[0].display;
-      selectedFile = items[0].file;
+    if (items && items.length > 0) {
+      selectHymn(items[0]);
     }
   }
   clearSearchResults();
@@ -1062,12 +1896,9 @@ tabNew.addEventListener('click', async () => {
 const categoryButtonText = document.getElementById('categoryButtonText');
 
 function toggleCategoryMenu() {
-  // Check if it HAS the class 'active-menu'
   const isActive = categoryOptions.classList.contains('active-menu');
   if (isActive) {
     categoryOptions.classList.remove('active-menu');
-    // Wait for transition then hide? CSS transitions handle opacity.
-    // For simple pointer-events handling, removing active-menu is enough if CSS sets pointer-events:none
   } else {
     categoryOptions.classList.add('active-menu');
   }
@@ -1083,30 +1914,22 @@ if (categoryButton) {
 // Using event delegation for the new DIV options structure
 if (categoryOptions) {
   categoryOptions.addEventListener('click', (e) => {
-    // Find the closest div with data-value (the option item)
     const option = e.target.closest('[data-value]');
     if (option) {
-      // Prevent event bubbling 
       e.stopPropagation();
-
       currentCategory = option.dataset.value;
 
-      // Update text inside span (Force text update)
       if (categoryButtonText) {
         categoryButtonText.textContent = currentCategory.toUpperCase();
       }
 
-      // Hide dropdown
       categoryOptions.classList.remove('active-menu');
-
-      // Clear results 
       clearSearchResults();
     }
   });
 
   // Close on outside click
   document.addEventListener('click', (e) => {
-    // If click is NOT inside categorySelect (the button + menu wrapper)
     if (categorySelect && !categorySelect.contains(e.target)) {
       categoryOptions.classList.remove('active-menu');
     }
@@ -1117,60 +1940,52 @@ if (categoryOptions) {
 function clearSearchResults() {
   resultsDiv.innerHTML = '';
   resultsDiv.classList.remove('active-results'); // Hide via animation class
+  selectedResultIndex = -1;
+  currentResults = [];
 }
 
 // muestra resultados
 function renderSearchResults(items) {
-  // Clear inner but keep container logic
   resultsDiv.innerHTML = '';
-  selectedResultIndex = -1; // Reset selection on new search
+  selectedResultIndex = -1;
+  currentResults = items || [];
 
-  if (!items.length) {
+  if (!items || !items.length) {
     resultsDiv.classList.remove('active-results');
     return;
   }
 
-  items.forEach(item => {
+  items.forEach((item, index) => {
     const div = document.createElement('div');
+    div.className = 'search-result-item';
     div.textContent = item.display;
+    div.dataset.index = index;
 
-    // Styling: Bigger text, padding, Black Hover effect (INLINE STYLES for reliability)
-    // Styling: Bigger text, padding, Black Hover effect (INLINE STYLES for reliability)
-    div.style.padding = '0.5rem 1.0rem'; // Reduced padding for density
+    div.style.padding = '0.6rem 1.0rem';
     div.style.cursor = 'pointer';
-    div.style.color = '#1f2937'; // gray-800
+    div.style.color = '#1f2937';
     div.style.fontSize = '1rem';
     div.style.fontWeight = '500';
     div.style.borderBottom = '1px solid #f3f4f6';
-    div.style.transition = 'all 0.1s ease'; // Faster item hover
+    div.style.transition = 'all 0.1s ease';
 
     div.addEventListener('mouseenter', () => {
-      div.style.backgroundColor = 'black';
-      div.style.color = 'white';
-      div.style.paddingLeft = '1.75rem';
+      selectedResultIndex = index;
+      updateSelectionVisuals();
     });
+
     div.addEventListener('mouseleave', () => {
       div.style.backgroundColor = 'transparent';
       div.style.color = '#1f2937';
-      div.style.paddingLeft = '1.25rem';
+      div.style.paddingLeft = '1.0rem';
     });
 
-    div.addEventListener('click', () => {
-      selectedFile = item.file;
-      updateSongInfo(item.display);
-      // Removed: searchInput.value = display; (User pref: keep text?)
-      // Actually user complained "if I click search box without modifying text...".
-      // Let's NOT clear the search input text on selection, just hide results?
-      // Or behave standard?
-      // Standard: keep text.
-      // searchInput.value = display; // <-- Can comment this out if user wants to keep typing?
-      // Most users expect it to fill. Let's keep filling but ENSURE re-play works.
-      searchInput.value = item.display;
-      clearSearchResults();
-
-      // Auto-Play Removed per user request.
-      // playButton.click(); 
+    div.addEventListener('click', (e) => {
+      e.stopPropagation();
+      selectHymn(item);
+      searchInput.focus();
     });
+
     resultsDiv.appendChild(div);
   });
 
@@ -1182,16 +1997,22 @@ async function doSearch() {
   const q = searchInput.value.trim();
   if (!q) {
     clearSearchResults();
+    selectedHymn = null;
     selectedFile = null;
     return;
   }
+
+  // If input matches already selected hymn display, don't reopen dropdown
+  if (selectedHymn && selectedHymn.display === q) {
+    return;
+  }
+
   const items = await ipcRenderer.invoke('search', {
     query: q,
     tab: currentTab,
     category: currentCategory
   });
   renderSearchResults(items);
-  selectedFile = null;
 }
 
 searchInput.addEventListener('input', () => {
@@ -1200,32 +2021,38 @@ searchInput.addEventListener('input', () => {
 });
 searchInput.addEventListener('focus', () => {
   updateClearButtonVisibility();
-  doSearch();
+  if (searchInput.value.trim() && (!selectedHymn || selectedHymn.display !== searchInput.value.trim())) {
+    doSearch();
+  }
 });
 
 function updateClearButtonVisibility() {
-  clearSearchButton.style.display =
-    searchInput.value.trim() ? 'block' : 'none';
+  if (clearSearchButton) {
+    clearSearchButton.style.display = searchInput.value.trim() ? 'block' : 'none';
+    if (searchInput.value.trim()) {
+      clearSearchButton.classList.remove('hidden');
+    } else {
+      clearSearchButton.classList.add('hidden');
+    }
+  }
 }
+
 clearSearchButton.addEventListener('click', () => {
   searchInput.value = '';
-  clearSearchResults();
+  selectedHymn = null;
   selectedFile = null;
+  clearSearchResults();
   updateClearButtonVisibility();
   searchInput.focus();
 });
 
 // click fuera cierra dropdowns
 document.addEventListener('click', event => {
-  if (!categorySelect.contains(event.target))
+  if (categorySelect && !categorySelect.contains(event.target))
     categoryOptions.classList.add('hidden');
-  if (!resultsDiv.contains(event.target) && event.target !== searchInput)
+  if (resultsDiv && !resultsDiv.contains(event.target) && event.target !== searchInput)
     clearSearchResults();
 });
-
-// init UI
-// Load tab persistence handles this now
-// categorySelect.style.display = currentTab === 'previous' ? 'none' : 'block';
 
 // ————— Media Control Logic —————
 let isDraggingSeek = false;
@@ -1252,14 +2079,11 @@ async function playNeighbor(offset) {
     category: currentCategory
   });
 
-  // Find exact match for the number prefix
-  const match = items.find(item => item.display.startsWith(targetStr));
+  const match = items.find(item => item.display.startsWith(targetStr)) || items[0];
 
   if (match) {
-    selectedFile = match.file;
-    playButton.click(); // Reuse existing play logic
-    // FORCE UPDATE info
-    updateSongInfo(match.display);
+    selectHymn(match);
+    playSelectedHymn();
   }
 }
 
@@ -1277,6 +2101,13 @@ playerPrev.addEventListener('click', () => playNeighbor(-1));
 playerNext.addEventListener('click', () => playNeighbor(1));
 
 function updateSongInfo(displayString) {
+  if (!displayString) {
+    playerSongTitle.textContent = '-';
+    playerSongNumber.textContent = '';
+    currentHymnNumber = null;
+    return;
+  }
+
   // Expected format: "001 – Title"
   const parts = displayString.split('–').map(s => s.trim());
   if (parts.length >= 2) {
@@ -1300,24 +2131,9 @@ function updateSongInfo(displayString) {
 playerPlayPause.addEventListener('click', () => {
   const isPlaying = iconPlay.style.display === 'none';
 
-  // If user clicks Footer Play on a finished song, 'play' command should restart it IF video window handles it.
-  // If video window is at end, 'play' might do nothing without 'seek 0'.
-
-  // Let's be robust: If ended (iconPlay visible), send 'play'.
-  // If it was just selected from search but never loaded, we need 'load-media'.
-
-  // The separate `playButton` (Big Black Button) handles loading.
-  // The footer button is for control.
-
-  // User complaint: "click search box... want to play again nothing happens".
-  // This implies using the BIG Play button or Enter.
-  // User request: Bottom Play Button should work even if not started yet.
-  if (selectedFile && !isPlaying) {
+  if ((selectedHymn || selectedFile) && !isPlaying) {
     if (playerSeek.value == 0 && currentTimeSpan.textContent === "0:00") {
-      // Assume never loaded.
-      console.log("Starting media via Footer Play...");
-      ipcRenderer.send('load-media', selectedFile);
-      ipcRenderer.send('media-command', { action: 'play' });
+      playSelectedHymn();
       return;
     }
   }
@@ -1325,24 +2141,14 @@ playerPlayPause.addEventListener('click', () => {
   ipcRenderer.send('media-command', { action: isPlaying ? 'pause' : 'play' });
 });
 
-// Big Play Button Logic - Handles RELOAD/Replay
-playButton.addEventListener('click', () => {
-  if (selectedFile) {
-    // Always send load-media to force replay/restart
-    ipcRenderer.send('load-media', selectedFile);
-    // Also ensure we are in play mode
-    ipcRenderer.send('media-command', { action: 'play' });
-
-    // Ensure live is active if desired?
-    // if (!liveActive) setLiveButtonState(true); // Maybe? User logic prefers manual toggle usually, but loading often implies showing.
-    // Let's force live on Load for convenience? - User didn't ask. Stick to requested.
-  }
-});
-
 playerSeek.addEventListener('mousedown', () => isDraggingSeek = true);
 playerSeek.addEventListener('mouseup', () => {
   isDraggingSeek = false;
-  ipcRenderer.send('media-command', { action: 'seek', value: parseFloat(playerSeek.value) });
+  const targetPercent = parseFloat(playerSeek.value);
+  ipcRenderer.send('media-command', { action: 'seek', value: targetPercent });
+  if (previewVideo && previewVideo.duration) {
+    previewVideo.currentTime = (targetPercent / 100) * previewVideo.duration;
+  }
 });
 playerSeek.addEventListener('input', () => {
   updateSeekFill(); // Update visual fill while dragging
@@ -1403,7 +2209,6 @@ ipcRenderer.on('media-status', (event, status) => {
     playerSeek.value = 0;
     updateSeekFill(); // Reset fill
     currentTimeSpan.textContent = "0:00";
-    // mediaControls.style.display = 'none'; // REMOVED auto-hide
   }
 });
 
@@ -1436,12 +2241,15 @@ toggleCompactBtn.addEventListener('click', () => {
   if (isCompact) {
     iconCollapse.style.display = 'none';
     iconExpand.style.display = 'block';
-    // Adjust footer bottom position if needed, but height transition handles it visually
   } else {
     iconCollapse.style.display = 'block';
     iconExpand.style.display = 'none';
   }
-  // Optional: Persist this preference?
+
+  if (projectionPreviewContainer) {
+    projectionPreviewContainer.style.bottom = isCompact ? '74px' : '104px';
+  }
+
   ipcRenderer.invoke('set-store-value', 'playerCompact', isCompact);
 });
 
@@ -1452,6 +2260,9 @@ toggleCompactBtn.addEventListener('click', () => {
     mediaControls.classList.add('compact');
     iconCollapse.style.display = 'none';
     iconExpand.style.display = 'block';
+    if (projectionPreviewContainer) {
+      projectionPreviewContainer.style.bottom = '74px';
+    }
   }
 })();
 // Socket moved to top
@@ -1470,17 +2281,13 @@ socket.on('command', (data) => {
     case 'play':
       if (data.file) {
         // Play specific file from Search Result
-        selectedFile = data.file;
-        if (data.tab) currentTab = data.tab;
-        if (data.category) currentCategory = data.category;
-
-        ipcRenderer.invoke('play', {
+        selectHymn({
           file: data.file,
-          tab: data.tab,
-          category: data.category
+          tab: data.tab || currentTab,
+          category: data.category || currentCategory,
+          display: data.display || data.file
         });
-
-        if (data.display) updateSongInfo(data.display);
+        playSelectedHymn();
       } else {
         // Resume if paused
         if (iconPlay.style.display !== 'none') playerPlayPause.click();

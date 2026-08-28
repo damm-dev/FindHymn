@@ -14,14 +14,30 @@ const mappingNewCantado = require('./mapping_new_cantado.json');
 const store = new Store();
 app.disableHardwareAcceleration();
 
+// ————— Single Instance Lock —————
+const gotTheLock = app.requestSingleInstanceLock();
+
+if (!gotTheLock) {
+  console.log('[main] Ya hay otra instancia de Find Hymn ejecutándose. Cerrando instancia duplicada.');
+  app.quit();
+} else {
+  app.on('second-instance', (event, commandLine, workingDirectory) => {
+    // Si intentan abrir una segunda instancia, enfoca y restaura la ventana principal existente
+    if (mainWin && !mainWin.isDestroyed()) {
+      if (mainWin.isMinimized()) mainWin.restore();
+      if (!mainWin.isVisible()) mainWin.show();
+      mainWin.focus();
+    }
+  });
+}
+
 // Start Local Server
 const { fork } = require('child_process');
 let serverProcess = null;
 const serverPath = path.join(__dirname, 'server', 'server.js');
 
-
-
 function startServer(port = 3000) {
+  if (!gotTheLock) return; // Do not start server if we don't have the lock
   if (fs.existsSync(serverPath)) {
     // Pass port and auth config
     const authEnabled = store.get('authEnabled', false);
@@ -42,8 +58,10 @@ function startServer(port = 3000) {
 }
 
 // Auto-start default
-const savedPort = store.get('serverPort', 3000); // Default 3000
-startServer(savedPort);
+if (gotTheLock) {
+  const savedPort = store.get('serverPort', 3000); // Default 3000
+  startServer(savedPort);
+}
 
 
 let mainWin = null;
@@ -146,7 +164,8 @@ function createWindow() {
   mainWin = new BrowserWindow({
     x: state.x, y: state.y,
     width: state.width || 1280, height: state.height || 800,
-    show: !startHidden, // Modified
+    show: false, // Wait for ready-to-show to prevent progressive rendering / blank flash
+    backgroundColor: '#f3f4f6',
     autoHideMenuBar: true,
     menuBarVisible: false,
     frame: false,
@@ -162,7 +181,21 @@ function createWindow() {
     }
   });
 
-  if (state.isMaximized && !startHidden) mainWin.maximize();
+  mainWin.once('ready-to-show', () => {
+    if (!startHidden) {
+      if (state.isMaximized) mainWin.maximize();
+      mainWin.show();
+      mainWin.focus();
+    }
+  });
+
+  // Fallback in case ready-to-show is delayed
+  setTimeout(() => {
+    if (mainWin && !mainWin.isDestroyed() && !mainWin.isVisible() && !startHidden) {
+      if (state.isMaximized) mainWin.maximize();
+      mainWin.show();
+    }
+  }, 1000);
 
   mainWin.loadFile('index.html');
 
@@ -203,6 +236,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  if (!gotTheLock) return;
   createWindow();
 });
 
@@ -453,6 +487,22 @@ ipcMain.handle('get-server-status', () => {
   };
 });
 
+// Clear Cache & Storage Data Handler
+ipcMain.handle('clear-cache', async () => {
+  try {
+    const { session } = require('electron');
+    if (session && session.defaultSession) {
+      await session.defaultSession.clearCache();
+      await session.defaultSession.clearStorageData();
+    }
+    store.clear();
+    app.relaunch();
+    app.exit(0);
+  } catch (err) {
+    console.error('Error clearing cache:', err);
+  }
+});
+
 // ————— Helpers for Window Management —————
 
 function getTargetDisplay() {
@@ -547,6 +597,15 @@ function createVideoWindow(targetDisplay) {
   return videoWin;
 }
 
+function normalizeText(text) {
+  if (!text) return '';
+  return text.toString()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+}
+
 ipcMain.handle('search', async (event, { query, tab, category }) => {
   let dir, mapping;
   let basePath = getBasePath();
@@ -556,14 +615,16 @@ ipcMain.handle('search', async (event, { query, tab, category }) => {
     basePath = path.dirname(basePath);
   }
 
+  const safeCategory = (category || 'Cantado').toLowerCase();
+
   if (tab === 'previous') {
     dir = path.join(basePath, 'videos', 'Anterior');
     mapping = mappingPrev;
   } else {
-    if (category.toLowerCase() === 'pista') {
+    if (safeCategory === 'pista') {
       dir = path.join(basePath, 'videos', 'Nuevo', 'Pista');
       mapping = mappingNewPista;
-    } else if (category.toLowerCase() === 'cantado') {
+    } else if (safeCategory === 'cantado') {
       dir = path.join(basePath, 'videos', 'Nuevo', 'Cantado');
       mapping = mappingNewCantado;
     } else {
@@ -574,18 +635,92 @@ ipcMain.handle('search', async (event, { query, tab, category }) => {
 
   try {
     console.log('[DEBUG-SEARCH] Searching in:', dir);
+    if (!fs.existsSync(dir)) {
+      console.warn('[DEBUG-SEARCH] Directory does not exist:', dir);
+      return [];
+    }
+
     let files = await fs.promises.readdir(dir);
-    files = files.filter(f => f.toLowerCase().endsWith('.mp4') &&
-      path.basename(f, '.mp4').toLowerCase().includes(query.toLowerCase())
-    );
-    console.log(`[DEBUG-SEARCH] Found ${files.length} matches for "${query}"`);
-    return files.map(f => {
-      const m = f.match(/^(\d{3})/);
-      const num = m ? m[1] : '';
-      const rawTitle = f.replace(/^\d{3}\s*-\s*/, '').replace(/\.mp4$/i, '');
-      const title = mapping[num] || rawTitle;
-      return { file: f, display: `${num} – ${title}` };
+    const mp4Files = files.filter(f => f.toLowerCase().endsWith('.mp4'));
+    const normQuery = normalizeText(query);
+    const isNumQuery = /^\d+$/.test(normQuery);
+    const queryNumVal = isNumQuery ? parseInt(normQuery, 10) : null;
+    const queryPadded = isNumQuery ? normQuery.padStart(3, '0') : null;
+
+    const matches = [];
+
+    for (const f of mp4Files) {
+      const baseName = path.basename(f, '.mp4');
+      const normBaseName = normalizeText(baseName);
+      const m = f.match(/^(\d{1,4})/);
+      const rawNum = m ? m[1] : '';
+      const num = rawNum ? rawNum.padStart(3, '0') : '';
+      const numVal = rawNum ? parseInt(rawNum, 10) : null;
+
+      const rawTitle = f.replace(/^\d{1,4}\s*[-–—.]?\s*/, '').replace(/\.mp4$/i, '').trim();
+      const title = (mapping && (mapping[num] || mapping[rawNum])) || rawTitle;
+      const normTitle = normalizeText(title);
+      const display = `${num || rawNum || ''} – ${title}`;
+      const normDisplay = normalizeText(display);
+
+      let matched = false;
+      let score = 999;
+
+      if (isNumQuery) {
+        // Exact number match (e.g. user typed "1" and hymn is "001" or "1")
+        if (numVal !== null && numVal === queryNumVal) {
+          matched = true;
+          score = 1;
+        } else if (num.startsWith(queryPadded) || (rawNum && rawNum.startsWith(normQuery))) {
+          matched = true;
+          score = 10;
+        } else if (num.includes(normQuery) || (rawNum && rawNum.includes(normQuery))) {
+          matched = true;
+          score = 20;
+        } else if (normTitle.includes(normQuery) || normBaseName.includes(normQuery)) {
+          matched = true;
+          score = 30;
+        }
+      } else {
+        // Text match
+        if (normTitle.startsWith(normQuery)) {
+          matched = true;
+          score = 5;
+        } else if (normTitle.includes(normQuery)) {
+          matched = true;
+          score = 15;
+        } else if (normBaseName.includes(normQuery) || normDisplay.includes(normQuery)) {
+          matched = true;
+          score = 25;
+        }
+      }
+
+      if (matched) {
+        matches.push({
+          file: f,
+          display,
+          numVal: numVal !== null ? numVal : 9999,
+          score,
+          tab,
+          category: safeCategory === 'pista' ? 'Pista' : 'Cantado'
+        });
+      }
+    }
+
+    // Sort: score ascending, then numeric value ascending, then title
+    matches.sort((a, b) => {
+      if (a.score !== b.score) return a.score - b.score;
+      if (a.numVal !== b.numVal) return a.numVal - b.numVal;
+      return a.display.localeCompare(b.display);
     });
+
+    console.log(`[DEBUG-SEARCH] Found ${matches.length} matches for "${query}"`);
+    return matches.map(item => ({
+      file: item.file,
+      display: item.display,
+      tab: item.tab,
+      category: item.category
+    }));
   } catch (err) {
     console.error('[DEBUG-SEARCH] Error reading directory:', dir, err.message);
     return [];
@@ -598,19 +733,21 @@ ipcMain.handle('play', async (event, { file, tab, category }) => {
     if (path.basename(basePath).toLowerCase() === 'videos') {
       basePath = path.dirname(basePath);
     }
+    const safeCategory = (category || 'Cantado');
     const baseDir = (tab === 'previous')
       ? path.join(basePath, 'videos', 'Anterior')
-      : path.join(basePath, 'videos', 'Nuevo', category);
+      : path.join(basePath, 'videos', 'Nuevo', safeCategory);
     const fullPath = path.join(baseDir, file);
 
     if (!fs.existsSync(fullPath)) {
-      return { success: false, error: `No se encontró:\n${fullPath}` };
+      console.error('[main] Video file not found:', fullPath);
+      return { success: false, error: `No se encontró el video:\n${fullPath}` };
     }
 
     if (videoWin && !videoWin.isDestroyed()) {
+      if (videoWin.isMinimized()) videoWin.restore();
+      videoWin.show();
       videoWin.focus(); // Bring to front
-      // If it was minimized, restore? 
-      // videoWin.restore(); 
       videoWin.webContents.send('set-video', fullPath);
     } else {
       const targetDisplay = getTargetDisplay();
@@ -618,11 +755,16 @@ ipcMain.handle('play', async (event, { file, tab, category }) => {
 
       // Wait for load to send video
       videoWin.webContents.once('did-finish-load', () => {
-        videoWin.webContents.send('set-video', fullPath);
+        if (videoWin && !videoWin.isDestroyed()) {
+          if (videoWin.isMinimized()) videoWin.restore();
+          videoWin.show();
+          videoWin.focus();
+          videoWin.webContents.send('set-video', fullPath);
+        }
         event.sender.send('video-window-opened');
       });
     }
-    return { success: true };
+    return { success: true, fullPath };
   } catch (err) {
     console.error('[main] Error en play:', err);
     return { success: false, error: err.message };
@@ -649,4 +791,11 @@ ipcMain.handle('toggle-live', (event, liveActive) => {
       videoWin = null;
     }
   }
+});
+
+ipcMain.handle('get-video-source-id', () => {
+  if (videoWin && !videoWin.isDestroyed() && typeof videoWin.getMediaSourceId === 'function') {
+    return videoWin.getMediaSourceId();
+  }
+  return null;
 });

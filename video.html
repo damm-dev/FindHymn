@@ -118,13 +118,25 @@
     }
 
     ipcRenderer.on('set-video', (event, ruta) => {
-      video.src = ruta;
-      video.style.display = 'block';
-      welcomeMessage.style.display = 'none';
-      video.play();
-      // Notify parent window that video is playing
-      window.parent.postMessage('video-playing', '*');
-      ipcRenderer.send('media-status', { type: 'play' });
+      try {
+        const fileUrl = ruta.startsWith('file://') ? ruta : 'file:///' + ruta.replace(/\\/g, '/');
+        video.src = fileUrl;
+        video.currentTime = 0;
+        video.style.display = 'block';
+        welcomeMessage.style.display = 'none';
+        
+        const playPromise = video.play();
+        if (playPromise !== undefined) {
+          playPromise.then(() => {
+            window.parent.postMessage('video-playing', '*');
+            ipcRenderer.send('media-status', { type: 'play' });
+          }).catch(err => {
+            console.error("Playback error on set-video:", err);
+          });
+        }
+      } catch (err) {
+        console.error("Error setting video source:", err);
+      }
     });
 
     // ————— Media API for Main Window —————
