@@ -1066,7 +1066,7 @@ function openTutorialModal(step = 0) {
 function closeTutorialModal() {
   if (tutorialSpotlightOverlay) tutorialSpotlightOverlay.style.display = 'none';
   if (spotlightTypeTimer) clearTimeout(spotlightTypeTimer);
-  ipcRenderer.invoke('set-store-value', 'hasSeenTutorial_v2', true);
+  ipcRenderer.invoke('set-store-value', 'hasSeenTutorial_v2_0_4', true);
 
   if (searchInput && searchInput.value) {
     searchInput.value = '';
@@ -1271,7 +1271,7 @@ window.addEventListener('keydown', (e) => {
 // Auto-launch tutorial on first update/run
 (async () => {
   try {
-    const hasSeen = await ipcRenderer.invoke('get-store-value', 'hasSeenTutorial_v2');
+    const hasSeen = await ipcRenderer.invoke('get-store-value', 'hasSeenTutorial_v2_0_4');
     if (!hasSeen) {
       setTimeout(() => {
         openTutorialModal(0);
