@@ -17,6 +17,7 @@
     ],
     "win": {
       "target": [
+        "portable",
         "nsis"
       ],
       "icon": "build/icon.ico",
@@ -27,6 +28,9 @@
           "repo": "FindHymn"
         }
       ]
+    },
+    "portable": {
+      "artifactName": "${productName}.${version}.${ext}"
     },
     "nsis": {
       "oneClick": true,
