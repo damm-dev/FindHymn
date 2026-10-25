@@ -98,6 +98,9 @@
     const bibleVerse = document.getElementById('bibleVerse');
     const video = document.getElementById('proyector');
 
+    let currentVolume = 1.0;
+    let currentLoop = false;
+
     const textToType = 'BIENVENIDOS';
     const verseDelay = 500; // ms delay before showing verse after fade-in
 
@@ -121,6 +124,8 @@
       try {
         const fileUrl = ruta.startsWith('file://') ? ruta : 'file:///' + ruta.replace(/\\/g, '/');
         video.src = fileUrl;
+        video.volume = currentVolume;
+        video.loop = currentLoop;
         video.currentTime = 0;
         video.style.display = 'block';
         welcomeMessage.style.display = 'none';
@@ -142,6 +147,7 @@
     // ————— Media API for Main Window —————
     ipcRenderer.on('media-command', (event, command) => {
       if (command.action === 'play') {
+        if (!video.src) return;
         // FIX: If ended, reset to 0 to replay visible video
         if (video.ended) {
           video.currentTime = 0;
@@ -159,18 +165,35 @@
         }
       } else if (command.action === 'pause') {
         video.pause();
+      } else if (command.action === 'stop') {
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
+        video.style.display = 'none';
+        welcomeMessage.style.display = 'flex';
+        showWelcomeMessage();
       } else if (command.action === 'seek') {
-        video.currentTime = (command.value / 100) * video.duration;
+        if (video.duration && !isNaN(video.duration) && isFinite(video.duration)) {
+          video.currentTime = (command.value / 100) * video.duration;
+        }
       } else if (command.action === 'volume') {
-        video.volume = command.value / 100;
+        const vol = Math.max(0, Math.min(1, (command.value || 0) / 100));
+        currentVolume = vol;
+        video.volume = vol;
       } else if (command.action === 'loop') {
-        video.loop = command.value;
+        currentLoop = !!command.value;
+        video.loop = currentLoop;
       }
     });
 
     video.addEventListener('play', () => ipcRenderer.send('media-status', { type: 'play' }));
-    video.addEventListener('pause', () => ipcRenderer.send('media-status', { type: 'pause' }));
+    video.addEventListener('pause', () => {
+      if (video.src) {
+        ipcRenderer.send('media-status', { type: 'pause' });
+      }
+    });
     video.addEventListener('timeupdate', () => {
+      if (!video.src) return;
       ipcRenderer.send('media-status', {
         type: 'timeupdate',
         currentTime: video.currentTime,

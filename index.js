@@ -14,6 +14,11 @@ const mappingNewCantado = require('./mapping_new_cantado.json');
 const store = new Store();
 app.disableHardwareAcceleration();
 
+// Fijar AppUserModelId en Windows para mantener el anclaje en la barra de tareas tras actualizar
+if (process.platform === 'win32') {
+  app.setAppUserModelId('com.damm.findhymn');
+}
+
 // ————— Single Instance Lock —————
 const gotTheLock = app.requestSingleInstanceLock();
 
@@ -36,19 +41,38 @@ const { fork } = require('child_process');
 let serverProcess = null;
 const serverPath = path.join(__dirname, 'server', 'server.js');
 
+function stopServer() {
+  if (serverProcess) {
+    try {
+      serverProcess.removeAllListeners();
+      serverProcess.kill();
+    } catch (e) {
+      console.error('Error stopping server process:', e);
+    }
+    serverProcess = null;
+  }
+}
+
 function startServer(port = 3000) {
   if (!gotTheLock) return; // Do not start server if we don't have the lock
+  stopServer();
   if (fs.existsSync(serverPath)) {
     // Pass port and auth config
     const authEnabled = store.get('authEnabled', false);
     const authKeyword = store.get('authKeyword', '');
 
-    serverProcess = fork(serverPath, [], {
+    const child = fork(serverPath, [], {
       env: {
         ...process.env,
         PORT: port,
         AUTH_ENABLED: authEnabled,
         AUTH_KEYWORD: authKeyword
+      }
+    });
+    serverProcess = child;
+    child.on('exit', () => {
+      if (serverProcess === child) {
+        serverProcess = null;
       }
     });
     console.log(`Mobile server started on port ${port} with PID:`, serverProcess.pid);
@@ -72,6 +96,18 @@ const TRAY_CONFIG_KEY = 'trayConfig'; // { mode: 'disabled'|'show'|'hide' }
 
 let tray = null;
 let isQuitting = false;
+let themeListenerRegistered = false;
+
+function getThemeTrayIcon() {
+  const { nativeTheme } = require('electron');
+  const iconWhite = path.join(__dirname, 'public/icons/icon-white.ico');
+  const iconBlack = path.join(__dirname, 'public/icons/icon-Black.ico');
+  const defaultIcon = path.join(__dirname, 'public/icons/icon.ico');
+
+  const candidate = nativeTheme.shouldUseDarkColors ? iconWhite : iconBlack;
+  if (fs.existsSync(candidate)) return candidate;
+  return defaultIcon;
+}
 
 function updateTray() {
   const trayConfig = store.get(TRAY_CONFIG_KEY, { mode: 'disabled' });
@@ -86,41 +122,40 @@ function updateTray() {
   }
 
   if (!tray) {
-    const iconPath = path.join(__dirname, 'icon.png'); // Need an icon. Usually included. Or use default.
-    // Assuming icon.png exists or fallback to empty for now (might show default electron icon)
-    // If no icon, Tray might fail. Let's try to use empty if not found, or standard.
-    // For now, let's assume we can use a system icon or skip if path invalid.
-    // Better: Helper function
     const { nativeTheme } = require('electron');
 
-    // Resolve Absolute Paths for Icons
-    const iconWhite = path.join(__dirname, 'public/icons/icon-white.ico');
-    const iconBlack = path.join(__dirname, 'public/icons/icon-Black.ico');
-    const defaultIcon = path.join(__dirname, 'public/icons/icon.ico');
-
-    const getThemeIcon = () => {
-      // On Windows: Dark Taskbar usually means White Icon needed. Light Taskbar means Black Icon.
-      // However, nativeTheme.shouldUseDarkColors often tells us about App Mode, not System Taskbar.
-      // In Windows 10/11, standard behavior:
-      // Dark System Mode -> Dark Taskbar -> White Icon
-      // Light System Mode -> Light Taskbar -> Black Icon
-      return nativeTheme.shouldUseDarkColors ? iconWhite : iconBlack;
-    };
-
     // Initial creation
-    tray = new Tray(getThemeIcon());
+    tray = new Tray(getThemeTrayIcon());
 
-    // Listener for theme changes
-    nativeTheme.on('updated', () => {
-      if (tray) tray.setImage(getThemeIcon());
+    // Listener for theme changes (register once)
+    if (!themeListenerRegistered) {
+      themeListenerRegistered = true;
+      nativeTheme.on('updated', () => {
+        if (tray) tray.setImage(getThemeTrayIcon());
+      });
+    }
+
+    tray.on('click', () => {
+      if (mainWin && !mainWin.isDestroyed()) {
+        if (mainWin.isVisible()) {
+          if (mainWin.isMinimized()) {
+            mainWin.restore();
+            mainWin.focus();
+          } else {
+            mainWin.hide();
+          }
+        } else {
+          mainWin.show();
+          mainWin.focus();
+        }
+      }
     });
-
   }
 
   tray.setToolTip('Find Hymn V2.0');
 
   const contextMenu = Menu.buildFromTemplate([
-    { label: 'Mostrar App', click: () => mainWin && mainWin.show() },
+    { label: 'Mostrar App', click: () => mainWin && !mainWin.isDestroyed() && mainWin.show() },
     {
       label: 'Reiniciar Servidor', click: () => {
         const port = store.get('serverPort', 3000);
@@ -136,21 +171,17 @@ function updateTray() {
     }
   ]);
   tray.setContextMenu(contextMenu);
+}
 
-  tray.on('click', () => {
-    if (mainWin) {
-      if (mainWin.isVisible()) {
-        if (mainWin.isMinimized()) {
-          mainWin.restore();
-          mainWin.focus();
-        } else {
-          mainWin.hide();
-        }
-      } else {
-        mainWin.show();
-        mainWin.focus();
-      }
-    }
+function isBoundsVisibleOnAnyDisplay(bounds) {
+  if (!bounds || typeof bounds.x !== 'number' || typeof bounds.y !== 'number') return false;
+  const displays = screen.getAllDisplays();
+  const centerX = bounds.x + (bounds.width || 800) / 2;
+  const centerY = bounds.y + (bounds.height || 600) / 2;
+  return displays.some(d => {
+    const b = d.bounds;
+    return centerX >= b.x && centerX <= b.x + b.width &&
+           centerY >= b.y && centerY <= b.y + b.height;
   });
 }
 
@@ -160,10 +191,14 @@ function createWindow() {
 
   // Decide if show or hide on start
   const startHidden = trayConfig.mode === 'hide';
+  const validPosition = isBoundsVisibleOnAnyDisplay(state);
 
   mainWin = new BrowserWindow({
-    x: state.x, y: state.y,
-    width: state.width || 1280, height: state.height || 800,
+    x: validPosition ? state.x : undefined,
+    y: validPosition ? state.y : undefined,
+    width: state.width || 1280,
+    height: state.height || 800,
+    icon: path.join(__dirname, 'public/icons/icon.ico'),
     show: false, // Wait for ready-to-show to prevent progressive rendering / blank flash
     backgroundColor: '#f3f4f6',
     autoHideMenuBar: true,
@@ -203,7 +238,9 @@ function createWindow() {
   updateTray();
 
   // Check for updates on startup
-  autoUpdater.checkForUpdatesAndNotify();
+  if (app.isPackaged) {
+    autoUpdater.checkForUpdatesAndNotify();
+  }
 
   // Close vs Minimize (Tray Logic)
   mainWin.on('close', (event) => {
@@ -215,14 +252,15 @@ function createWindow() {
     }
 
     // Normal closing
-    if (mainWin) {
-      const bounds = mainWin.getBounds();
+    if (mainWin && !mainWin.isDestroyed()) {
+      const isMax = mainWin.isMaximized();
+      const bounds = isMax ? mainWin.getNormalBounds() : mainWin.getBounds();
       store.set('mainWindowState', {
         x: bounds.x,
         y: bounds.y,
         width: bounds.width,
         height: bounds.height,
-        isMaximized: mainWin.isMaximized()
+        isMaximized: isMax
       });
     }
     // Cleanup videoWin
@@ -240,50 +278,65 @@ app.whenReady().then(() => {
   createWindow();
 });
 
+app.on('before-quit', () => {
+  isQuitting = true;
+  stopServer();
+});
+
 app.on('window-all-closed', () => {
+  stopServer();
   if (process.platform !== 'darwin') {
     app.quit();
-  }
-  if (serverProcess) {
-    serverProcess.kill();
-    serverProcess = null;
   }
 });
 app.on('activate', () => {
   if (!mainWin) createWindow();
 });
 
-ipcMain.on('restart-app', () => {
-  autoUpdater.quitAndInstall();
+// ————— Auto-Updater —————
+autoUpdater.on('before-quit-for-update', () => {
+  isQuitting = true;
+  stopServer();
 });
 
-// ————— Auto-Updater —————
 autoUpdater.on('checking-for-update', () => {
-  if (mainWin) mainWin.webContents.send('checking-for-update');
+  if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('checking-for-update');
 });
 
 autoUpdater.on('update-available', () => {
-  if (mainWin) mainWin.webContents.send('update-available');
+  if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('update-available');
 });
 
 autoUpdater.on('update-not-available', () => {
-  if (mainWin) mainWin.webContents.send('update-not-available');
+  if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('update-not-available');
 });
 
 autoUpdater.on('error', (err) => {
-  if (mainWin) mainWin.webContents.send('update-error', err.message);
+  if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('update-error', err.message);
 });
 
 autoUpdater.on('update-downloaded', () => {
-  if (mainWin) mainWin.webContents.send('update-downloaded');
+  if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send('update-downloaded');
 });
 
 ipcMain.on('check-for-updates', () => {
+  if (!app.isPackaged) {
+    if (mainWin && !mainWin.isDestroyed()) {
+      mainWin.webContents.send('update-not-available');
+    }
+    return;
+  }
   autoUpdater.checkForUpdatesAndNotify();
 });
 
 ipcMain.on('restart-app', () => {
-  autoUpdater.quitAndInstall();
+  isQuitting = true;
+  stopServer();
+  if (videoWin && !videoWin.isDestroyed()) {
+    try { videoWin.close(); } catch (e) { }
+    videoWin = null;
+  }
+  autoUpdater.quitAndInstall(false, true);
 });
 
 function getBasePath() {
@@ -309,7 +362,7 @@ ipcMain.handle('set-store-value', (event, key, value) => {
 
 // Video Window Controls Handler
 ipcMain.on('video-window-control', (event, action) => {
-  if (!videoWin) return;
+  if (!videoWin || videoWin.isDestroyed()) return;
   switch (action) {
     case 'minimize': videoWin.minimize(); break;
     case 'maximize':
@@ -382,9 +435,18 @@ ipcMain.handle('set-monitor', (event, monitorId) => {
 
   if (target) {
     store.set('selectedMonitorId', monitorId);
+    store.set('videoWindowState', {
+      x: target.bounds.x + 50,
+      y: target.bounds.y + 50,
+      width: 1000,
+      height: 700,
+      isMaximized: true
+    });
 
     // If window is open, move it!
     if (videoWin && !videoWin.isDestroyed()) {
+      if (videoWin.isFullScreen()) videoWin.setFullScreen(false);
+      if (videoWin.isMaximized()) videoWin.unmaximize();
       videoWin.setBounds({
         x: target.bounds.x + 50, // Center or reset
         y: target.bounds.y + 50,
@@ -392,8 +454,6 @@ ipcMain.handle('set-monitor', (event, monitorId) => {
         height: 700
       });
       videoWin.maximize();
-      // Optionally reload or ensure content?
-      // videoWin.reload(); 
     }
     return true;
   }
@@ -406,8 +466,8 @@ ipcMain.on('media-command', (event, command) => {
     if (command.action === 'fullscreen') {
       videoWin.setFullScreen(!videoWin.isFullScreen());
     } else if (command.action === 'stop') {
-      // Stop playback and reset to welcome screen
-      videoWin.reload();
+      // Stop playback and reset to welcome screen without full page reload
+      videoWin.webContents.send('media-command', command);
       // Notify renderer to reset UI
       if (mainWin && !mainWin.isDestroyed()) {
         mainWin.webContents.send('media-stopped');
@@ -425,14 +485,10 @@ ipcMain.on('media-status', (event, status) => {
   }
 });
 
-// Restart Server Handler
 // Restart Server Handler (Modified for custom port)
 ipcMain.handle('restart-server', async () => {
   console.log('Restarting server process...');
-  if (serverProcess) {
-    serverProcess.kill();
-    serverProcess = null;
-  }
+  stopServer();
 
   const port = store.get('serverPort', 3000);
   startServer(port);
@@ -455,10 +511,6 @@ ipcMain.handle('set-server-config', async (event, config) => {
   store.set('authKeyword', config.keyword);
 
   // Restart server to apply changes
-  if (serverProcess) {
-    serverProcess.kill();
-    serverProcess = null;
-  }
   startServer(config.port);
   return true;
 });
@@ -471,10 +523,7 @@ ipcMain.handle('toggle-server', async (event, shouldOn) => {
       startServer(port);
     }
   } else {
-    if (serverProcess) {
-      serverProcess.kill();
-      serverProcess = null;
-    }
+    stopServer();
   }
   return !!serverProcess;
 });
@@ -490,6 +539,8 @@ ipcMain.handle('get-server-status', () => {
 // Clear Cache & Storage Data Handler
 ipcMain.handle('clear-cache', async () => {
   try {
+    isQuitting = true;
+    stopServer();
     const { session } = require('electron');
     if (session && session.defaultSession) {
       await session.defaultSession.clearCache();
@@ -527,6 +578,17 @@ function getTargetDisplay() {
   return displays[0];
 }
 
+function isBoundsOnDisplay(bounds, display) {
+  if (!bounds || typeof bounds.x !== 'number' || typeof bounds.y !== 'number' || !display || !display.bounds) {
+    return false;
+  }
+  const centerX = bounds.x + (bounds.width || 1000) / 2;
+  const centerY = bounds.y + (bounds.height || 700) / 2;
+  const b = display.bounds;
+  return centerX >= b.x && centerX <= b.x + b.width &&
+         centerY >= b.y && centerY <= b.y + b.height;
+}
+
 function createVideoWindow(targetDisplay) {
   // Load saved state or calculate default relative to target display
   const savedState = store.get('videoWindowState', {});
@@ -538,16 +600,10 @@ function createVideoWindow(targetDisplay) {
     height: 700
   };
 
-  // Use saved bounds if they are valid? 
-  // We prefer to respect the Target Monitor first. 
-  // Only restore detailed bounds if we are mostly sure it's same config.
-  // For simplicity: If savedState exists, we override x/y/w/h 
-  // BUT we must ensure it's on the correct display if possible, or trust the user moved it.
-  // Let's trust the saved state strictly if it exists.
-  if (savedState.width && savedState.height) {
+  // Respect Target Monitor first: only use savedState bounds if they lie within targetDisplay
+  const savedOnTarget = isBoundsOnDisplay(savedState, targetDisplay);
+  if (savedOnTarget && savedState.width && savedState.height) {
     bounds = savedState;
-  } else {
-    // Default positioning if no state
   }
 
   videoWin = new BrowserWindow({
@@ -555,13 +611,14 @@ function createVideoWindow(targetDisplay) {
     y: bounds.y,
     width: bounds.width,
     height: bounds.height,
+    icon: path.join(__dirname, 'public/icons/icon.ico'),
     autoHideMenuBar: true,
     menuBarVisible: false,
     frame: true, // Native Windows Title Bar
     webPreferences: { nodeIntegration: true, contextIsolation: false }
   });
 
-  if (savedState.isMaximized) {
+  if (savedOnTarget ? savedState.isMaximized : (savedState.isMaximized !== false)) {
     videoWin.maximize();
   }
 
@@ -569,13 +626,14 @@ function createVideoWindow(targetDisplay) {
   const saveState = () => {
     if (!videoWin || videoWin.isDestroyed()) return;
     try {
-      const b = videoWin.getBounds();
+      const isMax = videoWin.isMaximized();
+      const b = isMax ? videoWin.getNormalBounds() : videoWin.getBounds();
       store.set('videoWindowState', {
         x: b.x,
         y: b.y,
         width: b.width,
         height: b.height,
-        isMaximized: videoWin.isMaximized()
+        isMaximized: isMax
       });
     } catch (e) { /* ignore */ }
   };
@@ -719,7 +777,9 @@ ipcMain.handle('search', async (event, { query, tab, category }) => {
       file: item.file,
       display: item.display,
       tab: item.tab,
-      category: item.category
+      category: item.category,
+      score: item.score,
+      numVal: item.numVal
     }));
   } catch (err) {
     console.error('[DEBUG-SEARCH] Error reading directory:', dir, err.message);

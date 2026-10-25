@@ -1,6 +1,6 @@
 {
   "name": "find_hymn_v2.0",
-  "version": "2.0.4",
+  "version": "2.0.5",
   "main": "index.js",
   "scripts": {
     "start": "electron .",
@@ -17,7 +17,6 @@
     ],
     "win": {
       "target": [
-        "portable",
         "nsis"
       ],
       "icon": "build/icon.ico",
@@ -28,6 +27,14 @@
           "repo": "FindHymn"
         }
       ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "FindHymn",
+      "deleteAppDataOnUninstall": false
     }
   },
   "keywords": [],

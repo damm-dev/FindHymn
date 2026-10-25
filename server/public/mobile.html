@@ -216,6 +216,8 @@
                 document.getElementById('loginOverlay').style.display = 'none';
                 document.getElementById('loginError').style.display = 'none';
                 document.getElementById('loginKeyword').value = '';
+                sendCommand('get-status');
+                sendCommand('get-live-state');
             } else {
                 document.getElementById('loginError').style.display = 'block';
                 document.getElementById('loginKeyword').style.borderColor = '#ef4444';
@@ -227,6 +229,13 @@
         if (btnLogin) {
             btnLogin.addEventListener('click', () => {
                 socket.emit('login', inputLogin.value.trim());
+            });
+        }
+        if (inputLogin) {
+            inputLogin.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    socket.emit('login', inputLogin.value.trim());
+                }
             });
         }
 
@@ -381,7 +390,13 @@
                 `;
                 el.onclick = () => {
                     sendCommand('play', { file: item.file, tab: item.sourceTab, category: item.category || 'Cantado', display: item.display });
-                    npTitle.textContent = item.display;
+                    const parts = item.display.split('–').map(s => s.trim());
+                    if (parts.length >= 2) {
+                        npMeta.textContent = `Himno #${parts[0]}`;
+                        npTitle.textContent = parts.slice(1).join(' – ');
+                    } else {
+                        npTitle.textContent = item.display;
+                    }
                     isLive = true;
                     updateLiveBtn();
                 };
@@ -392,8 +407,24 @@
         // PLAYER
         function updatePlayerState(data) {
             if (data.type === 'stopped') { resetUI(); return; }
-            if (data.title) npTitle.textContent = data.title;
-            if (data.number) npMeta.textContent = `Himno ${data.number}`;
+            if (data.title) {
+                npTitle.textContent = data.title === '-' ? 'Sin reproducción' : data.title;
+            }
+            if (data.number !== undefined) {
+                if (!data.number || data.number === '-') {
+                    npMeta.textContent = 'Selecciona un himno para proyectar';
+                } else {
+                    npMeta.textContent = data.number.startsWith('Himno') ? data.number : `Himno ${data.number}`;
+                }
+            }
+            if (data.loop !== undefined) {
+                isLoop = !!data.loop;
+                btnLoop.classList.toggle('active', isLoop);
+            }
+            if (data.volume !== undefined) {
+                const volSlider = document.querySelector('.vol-slider');
+                if (volSlider) volSlider.value = data.volume;
+            }
             if (data.currentTime !== undefined && data.duration) {
                 const pct = (data.currentTime / data.duration) * 100;
                 if (!isSeeking) {
@@ -403,13 +434,24 @@
                     timeTot.textContent = fmtTime(data.duration);
                 }
             }
-            if (data.type === 'play') { iconPlay.style.display = 'none'; iconPause.style.display = 'block'; }
-            else if (data.type === 'pause') { iconPlay.style.display = 'block'; iconPause.style.display = 'none'; }
+            if (data.type === 'play') {
+                iconPlay.style.display = 'none';
+                iconPause.style.display = 'block';
+            } else if (data.type === 'pause') {
+                iconPlay.style.display = 'block';
+                iconPause.style.display = 'none';
+            } else if (data.type === 'ended') {
+                iconPlay.style.display = 'block';
+                iconPause.style.display = 'none';
+                seekSlider.value = 0;
+                updateSeekVis(0);
+                timeCurr.textContent = '0:00';
+            }
         }
 
         function resetUI() {
             npTitle.textContent = "Sin reproducción";
-            npMeta.textContent = "-";
+            npMeta.textContent = "Selecciona un himno para proyectar";
             seekSlider.value = 0;
             updateSeekVis(0);
             timeCurr.textContent = "0:00";

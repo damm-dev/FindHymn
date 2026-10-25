@@ -2,6 +2,7 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
+const os = require('os');
 const ip = require('ip');
 const cors = require('cors');
 
@@ -18,6 +19,36 @@ const PORT = process.env.PORT || 3000;
 const AUTH_ENABLED = process.env.AUTH_ENABLED === 'true';
 const AUTH_KEYWORD = process.env.AUTH_KEYWORD || '';
 
+function getBestLocalIP() {
+    const interfaces = os.networkInterfaces();
+    const virtualPattern = /vethernet|wsl|virtualbox|vmware|vbox|hyper-v|docker|pseudo|loopback|tap|tun|vpn|hamachi|radmin|zerotier/i;
+    const candidates = [];
+
+    for (const name of Object.keys(interfaces)) {
+        for (const iface of interfaces[name] || []) {
+            const family = iface.family === 4 ? 'IPv4' : iface.family;
+            if (family !== 'IPv4' || iface.internal) continue;
+            const addr = iface.address;
+            if (!addr || addr.startsWith('169.254.')) continue;
+
+            const isVirtual = virtualPattern.test(name) || addr === '192.168.56.1';
+            const isPreferredName = /wi-?fi|wlan|wireless|ethernet|eth|en\d/i.test(name);
+            let priority = 50;
+            if (isVirtual) priority = 100;
+            else if (isPreferredName && addr.startsWith('192.168.')) priority = 1;
+            else if (addr.startsWith('192.168.')) priority = 5;
+            else if (isPreferredName) priority = 10;
+            else if (addr.startsWith('10.')) priority = 20;
+
+            candidates.push({ addr, priority });
+        }
+    }
+
+    candidates.sort((a, b) => a.priority - b.priority);
+    if (candidates.length > 0) return candidates[0].addr;
+    return ip.address() || 'localhost';
+}
+
 // Middleware
 app.use(cors());
 app.use(express.static(path.join(__dirname, 'public')));
@@ -29,7 +60,7 @@ app.get('/', (req, res) => {
 });
 
 app.get('/ip', (req, res) => {
-    res.json({ ip: ip.address(), port: PORT });
+    res.json({ ip: getBestLocalIP(), port: PORT });
 });
 
 // Socket.io
@@ -42,6 +73,7 @@ io.on('connection', (socket) => {
     // Handle Login
     socket.on('login', (keyword) => {
         if (!AUTH_ENABLED) {
+            socket.authenticated = true;
             socket.emit('auth_result', { success: true });
             return;
         }
@@ -55,13 +87,9 @@ io.on('connection', (socket) => {
 
     // Identify client type
     socket.on('register', (type) => {
-        // Desktop is always trusted (it runs the server generally, but here it connects as localhost)
-        // If coming from localhost, maybe auto-trust? 
-        // For now, let's assume 'desktop' client (renderer) bypasses or handles auth?
-        // Actually renderer.js connects but doesn't usually send 'command's for itself to handle.
-        // It RECEIVES commands.
-        // But if renderer sends 'status', it should be allowed.
-
+        if (type === 'desktop') {
+            socket.authenticated = true;
+        }
         socket.join(type); // 'desktop' or 'mobile'
         console.log(`Client registered as: ${type}`);
     });
@@ -81,9 +109,6 @@ io.on('connection', (socket) => {
 
     // Relay status from Desktop to Mobile (optional, for sync)
     socket.on('status', (data) => {
-        // Desktop sending status updates - usually trusted or we can check IP/origin if needed
-        // For simplicity, allow status broadcasting from anyone or lock strictly?
-        // Let's assume desktop client handles this.
         io.to('mobile').emit('status', data);
     });
 
@@ -93,5 +118,5 @@ io.on('connection', (socket) => {
 });
 
 server.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running at http://${ip.address()}:${PORT}`);
+    console.log(`Server running at http://${getBestLocalIP()}:${PORT}`);
 });

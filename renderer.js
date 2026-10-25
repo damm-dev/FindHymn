@@ -1,9 +1,15 @@
 // renderer.js
-// renderer.js
 const { ipcRenderer, clipboard } = require('electron');
 const io = require('socket.io-client');
 const os = require('os'); // Added for IP detection
-const socket = io('http://localhost:3000');
+
+let socket = null;
+
+function emitSocketStatus(payload) {
+  if (socket) {
+    socket.emit('status', payload);
+  }
+}
 
 const liveButton = document.getElementById('liveButton');
 const searchInput = document.getElementById('searchInput');
@@ -18,25 +24,8 @@ const clearSearchButton = document.getElementById('clearSearchButton');
 
 // Media Controls Elements
 const mediaControls = document.getElementById('mediaControls');
-const playerPrev = document.getElementById('playerPrev'); // Note: In HTML, Prev/Next buttons might not have IDs yet! Check HTML.
-// Wait, I checked HTML. 
-// "Prev" button has onclick="ipcRenderer.send...". It does NOT have id="playerPrev" in the snippet I saw in Step 529.
-// "Next" button also lacks ID.
-// "Loop" has id="playerLoop".
-// "Stop" has id="playerStop".
-// "PlayPause" has id="playerPlayPause".
-
-// Let's re-read HTML to be sure about IDs before adding JS.
-// In Step 529:
-// Prev: <button onclick="..." ...> (No ID)
-// Next: <button ...> (No ID, No Onclick?) - Wait, the "Next" button in Step 529 has NO ID and NO onclick listener! It's dead code!
-// I need to ADD IDs to index.html first for Prev/Next if I want JS listeners, OR add onclicks.
-// But renderer.js lines 532-533 use `playerPrev.addEventListener`. So they expect IDs.
-
-// ACTION:
-// 1. Update index.html to add IDs `playerPrev` and `playerNext`.
-// 2. Update renderer.js to select them.
-
+const playerPrev = document.getElementById('playerPrev');
+const playerNext = document.getElementById('playerNext');
 const playerLoop = document.getElementById('playerLoop');
 const playerStop = document.getElementById('playerStop');
 const playerPlayPause = document.getElementById('playerPlayPause');
@@ -76,25 +65,6 @@ let isPreviewVisible = false;
 const configMenu = document.createElement('div');
 configMenu.className = 'dropdown-menu';
 configMenu.id = 'configMenu';
-configMenu.innerHTML = `
-  <div id="optSelectDesc" class="dropdown-item">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
-    Elegir carpeta de videos
-  </div>
-  
-  <div id="optServerMain" class="dropdown-item" style="justify-content: space-between;">
-    <div style="display:flex; gap:6px; align-items:center;">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
-        Servidor
-    </div>
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
-  </div>
-
-  <div id="optClearCache" class="dropdown-item">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
-    Borrar Caché y Reiniciar
-  </div>
-`;
 
 // Create Submenu for Server
 const serverSubMenu = document.createElement('div');
@@ -122,7 +92,6 @@ serverSubMenu.innerHTML = `
         Reiniciar
     </div>
 
-    <!-- Edit Port -->
     <!-- Edit Port / Config -->
     <div id="optServerEdit" class="dropdown-item">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
@@ -210,7 +179,6 @@ document.body.appendChild(configMenu);
 // HOVER HANDLING
 // HOVER HANDLING - SERVER
 const optServerMain = configMenu.querySelector('#optServerMain');
-// Logic moved below to be consistent with Tray logic
 
 // Keep Check for leaving either menu
 configMenu.addEventListener('mouseleave', (e) => {
@@ -248,7 +216,11 @@ if (optTrayMain) {
 
 // Ensure Server Menu Closes Tray Menu
 if (optServerMain) {
-  optServerMain.addEventListener('mouseenter', () => {
+  optServerMain.addEventListener('mouseenter', async () => {
+    const status = await ipcRenderer.invoke('get-server-status');
+    const toggleCheck = document.getElementById('serverToggleCheck');
+    if (toggleCheck) toggleCheck.checked = status.running;
+
     const rect = optServerMain.getBoundingClientRect();
     serverSubMenu.style.top = `${rect.top}px`;
     serverSubMenu.style.left = `${rect.right + 2}px`;
@@ -275,16 +247,13 @@ if (switchInput) switchInput.style = ""; // Clear inline styles
 const styleBlock = serverSubMenu.querySelector('style');
 if (styleBlock) styleBlock.remove();
 
-// Reusing settingsMenu logic but generalized
-// We can remove the manual creation of settingsMenu if we want, or adapt it.
-// Let's adapt settingsMenu to be the "Projection Menu" explicitly
-const settingsMenu = document.createElement('div'); // Ensure settingsMenu is defined if not already
+// Adapt settingsMenu to be the "Projection Menu" explicitly
+const settingsMenu = document.createElement('div');
 if (settingsMenu) {
   settingsMenu.className = 'dropdown-menu';
   settingsMenu.id = 'projectionMenu';
   settingsMenu.style.top = '';
   settingsMenu.style.left = '';
-  // Reset specific styles that conflict with class
   settingsMenu.style.backgroundColor = '';
   settingsMenu.style.backdropFilter = '';
   settingsMenu.style.border = '';
@@ -297,15 +266,9 @@ if (settingsMenu) {
 function toggleMenu(trigger, menu) {
   const isActive = menu.classList.contains('active');
 
-  // Close ALL dropdowns IF we are opening a root menu (like configMenu)
-  // But if we are opening a submenu, we might want to keep the parent open?
-  // Current logic: closes everything except 'menu'. 
-  // If 'menu' is a submenu, this closes the parent! That's the bug.
-
   if (menu.id !== 'serverSubMenu' && menu.id !== 'traySubMenu') {
     document.querySelectorAll('.dropdown-menu').forEach(m => {
       if (m !== menu && m.id !== 'serverSubMenu' && m.id !== 'traySubMenu') m.classList.remove('active');
-      // If we are opening configMenu, close submenus too?
       if (menu.id === 'configMenu' && (m.id === 'serverSubMenu' || m.id === 'traySubMenu')) m.classList.remove('active');
     });
   } else {
@@ -384,11 +347,10 @@ async function updateMonitorPill() {
           await ipcRenderer.invoke('set-monitor', m.id);
           // Broadcast to mobile
           const updated = await ipcRenderer.invoke('get-monitors');
-          socket.emit('status', { type: 'monitors-list', data: updated });
+          emitSocketStatus({ type: 'monitors-list', data: updated });
 
           // Local update
           updateMonitorPill();
-          // Update menu if open?
         } catch (err) { console.error(err); }
       };
 
@@ -400,9 +362,6 @@ async function updateMonitorPill() {
 
 // Init Pill
 updateMonitorPill();
-
-
-// We removed configPathOption from here, now it's separate button
 
 
 const monitorTitle = document.createElement('div');
@@ -499,7 +458,7 @@ async function openProjectionMenu(trigger) {
 
             // Broadcast change to mobile
             const updated = await ipcRenderer.invoke('get-monitors');
-            socket.emit('status', { type: 'monitors-list', data: updated });
+            emitSocketStatus({ type: 'monitors-list', data: updated });
 
             settingsMenu.classList.remove('active');
             updateMonitorPill();
@@ -521,7 +480,6 @@ async function updateServerStatusPill() {
   const ipLabel = document.getElementById('ipLabel');
   const keywordPill = document.getElementById('keywordPill');
   const keywordContent = document.getElementById('keywordContent');
-  const keywordEye = document.getElementById('keywordEye');
 
   try {
     const config = await ipcRenderer.invoke('get-server-config');
@@ -562,7 +520,6 @@ if (keywordEye && keywordContent) {
     if (isHidden) {
       keywordContent.textContent = keywordContent.dataset.real;
       keywordContent.dataset.hidden = 'false';
-      // Optional: Change Eye Icon
     } else {
       keywordContent.textContent = '•'.repeat(keywordContent.dataset.real.length);
       keywordContent.dataset.hidden = 'true';
@@ -577,9 +534,6 @@ if (keywordPill && keywordContent) {
     if (realKeyword) {
       clipboard.writeText(realKeyword);
 
-      // Visual Feedback
-      const wasHidden = keywordContent.dataset.hidden === 'true';
-
       // Save original styles
       const originalColor = keywordContent.style.color;
       const originalSpacing = keywordContent.style.letterSpacing;
@@ -593,8 +547,6 @@ if (keywordPill && keywordContent) {
         keywordContent.style.color = originalColor;
         keywordContent.style.letterSpacing = originalSpacing;
 
-        // Restore text based on state (which might have changed if user somehow clicked eye? No, propagation stopped)
-        // Check current state just to be safe
         if (keywordContent.dataset.hidden === 'true') {
           keywordContent.textContent = '•'.repeat(keywordContent.dataset.real.length);
         } else {
@@ -613,31 +565,44 @@ if (btnProjection) {
   });
 }
 
-// IP Logic
+// IP Logic (Prioritizes real Wi-Fi / Ethernet over virtual adapters like WSL, VirtualBox, VPN)
 function getLocalIP() {
   const interfaces = os.networkInterfaces();
+  const virtualPattern = /vethernet|wsl|virtualbox|vmware|vbox|hyper-v|docker|pseudo|loopback|tap|tun|vpn|hamachi|radmin|zerotier/i;
+  const candidates = [];
+
   for (const name of Object.keys(interfaces)) {
-    for (const iface of interfaces[name]) {
-      if ('IPv4' !== iface.family || iface.internal !== false) {
+    for (const iface of interfaces[name] || []) {
+      const family = iface.family === 4 ? 'IPv4' : iface.family;
+      if (family !== 'IPv4' || iface.internal !== false) {
         continue;
       }
-      return iface.address;
+      const addr = iface.address;
+      if (!addr || addr.startsWith('169.254.')) continue;
+
+      const isVirtual = virtualPattern.test(name) || addr === '192.168.56.1';
+      const isPreferredName = /wi-?fi|wlan|wireless|ethernet|eth|en\d/i.test(name);
+      let priority = 50;
+      if (isVirtual) priority = 100;
+      else if (isPreferredName && addr.startsWith('192.168.')) priority = 1;
+      else if (addr.startsWith('192.168.')) priority = 5;
+      else if (isPreferredName) priority = 10;
+      else if (addr.startsWith('10.')) priority = 20;
+
+      candidates.push({ addr, priority });
     }
   }
+
+  candidates.sort((a, b) => a.priority - b.priority);
+  if (candidates.length > 0) return candidates[0].addr;
   return 'localhost';
 }
 
 if (ipLabel) {
-  // Initial load handled by updateServerStatusPill()
-  // const ip = getLocalIP(); 
-  // const port = '3000'; 
-  // const full = `${ip}:${port}`;
-  // ipLabel.textContent = full; 
-
   if (btnCopyIP) {
     btnCopyIP.addEventListener('click', () => {
-      // Re-fetch current text content which should be correct
       const currentText = ipLabel.textContent;
+      if (currentText === "Copiado!") return;
       clipboard.writeText(`http://${currentText}`);
 
       const originalText = currentText;
@@ -654,13 +619,8 @@ if (ipLabel) {
 
 // Config Option Click
 document.addEventListener('click', async (e) => {
-  // Option: Restart Server (Old) - Removed as it's now in submenu
-  // if (e.target.id === 'optRestartServer') { ... } 
-
   // Option: Server Menu (Open Submenu)
   if (e.target.closest('#optServerMain')) {
-    // Don't close main config menu yet? Or maybe shift focus?
-    // UI pattern: Open submenu next to item.
     e.stopPropagation(); // prevent closing
     toggleMenu(document.getElementById('optServerMain'), serverSubMenu);
 
@@ -672,8 +632,11 @@ document.addEventListener('click', async (e) => {
   // Option: Server Toggle
   if (e.target.id === 'serverToggleCheck') {
     const isChecked = e.target.checked;
-    ipcRenderer.invoke('toggle-server', isChecked);
-    // Wait a bit?
+    await ipcRenderer.invoke('toggle-server', isChecked);
+    if (isChecked) {
+      const config = await ipcRenderer.invoke('get-server-config');
+      connectSocket(config.port || 3000);
+    }
   }
 
   // Option: Restart Server (New)
@@ -686,6 +649,8 @@ document.addEventListener('click', async (e) => {
     if (switchInput) switchInput.checked = false;
 
     const success = await ipcRenderer.invoke('restart-server');
+    const config = await ipcRenderer.invoke('get-server-config');
+    connectSocket(config.port || 3000);
 
     if (switchInput) switchInput.checked = success;
 
@@ -704,8 +669,6 @@ document.addEventListener('click', async (e) => {
   if (e.target.closest('#optTrayDisabled')) {
     await ipcRenderer.invoke('set-tray-config', { mode: 'disabled' });
     traySubMenu.classList.remove('active');
-    // Optionally update visual feedback immediately if menu stays open
-    // updateTrayMenuUI({mode: 'disabled', startWithWindows: document.getElementById('checkStartWindows').checked});
   }
   if (e.target.closest('#optTrayShow')) {
     await ipcRenderer.invoke('set-tray-config', { mode: 'show' });
@@ -736,21 +699,24 @@ document.addEventListener('click', async (e) => {
   }
 
   // Option: Select Folder
-  if (e.target.id === 'optSelectDesc') {
+  if (e.target.id === 'optSelectDesc' || e.target.closest('#optSelectDesc')) {
     configMenu.classList.remove('active');
     const folderPath = await ipcRenderer.invoke('select-video-folder');
     if (folderPath) {
       const success = await ipcRenderer.invoke('set-video-folder', folderPath);
       if (success) {
         searchInput.value = '';
+        selectedHymn = null;
+        selectedFile = null;
         clearSearchResults();
+        updateClearButtonVisibility();
         searchInput.focus();
       }
     }
   }
 
   // Option: Clear Cache
-  if (e.target.id === 'optClearCache') {
+  if (e.target.id === 'optClearCache' || e.target.closest('#optClearCache')) {
     console.log("Requesting Cache Clear...");
     configMenu.classList.remove('active');
     // No need to wait for result as app will restart
@@ -779,8 +745,6 @@ if (btnCancelServer) btnCancelServer.addEventListener('click', closeServerSettin
 if (btnSaveServer) btnSaveServer.addEventListener('click', saveServerSettings);
 
 async function openServerSettings() {
-  // 1. Get Config
-  // We assume handlers exist in main process (created in Phase 1 Part 2)
   const config = await ipcRenderer.invoke('get-server-config'); // { port, authEnabled, keyword }
 
   inputServerPort.value = config.port || 3000;
@@ -862,14 +826,13 @@ async function saveServerSettings() {
   if (success) {
     showToast("Configuración guardada y servidor reiniciado.", 'success');
     closeServerSettings();
-    // Update local status pill
+    // Update local status pill and reconnect socket to new port
     updateServerStatusPill();
+    connectSocket(port);
   } else {
     showToast("Error al guardar configuración.", 'error');
   }
 }
-
-
 
 
 // 3. Acerca de
@@ -877,8 +840,7 @@ const aboutModalCard = document.getElementById('aboutModalCard');
 
 // ————— Update Event Listeners —————
 ipcRenderer.on('checking-for-update', () => {
-  // We already show "Buscando..." on button click, but this handles auto-check too
-  // showToast("Buscando actualizaciones...", 'info'); 
+  // Handled on button click or background check
 });
 
 ipcRenderer.on('update-available', () => {
@@ -1280,15 +1242,9 @@ window.addEventListener('keydown', (e) => {
   } catch (e) {}
 })();
 
-// Old menu logic removed
 if (!document.getElementById('projectionMenu')) {
   document.body.appendChild(settingsMenu);
 }
-
-// settingsIcon click handler removed (merged above)
-
-// Close settings menu when clicking outside
-// This logic is now handled by the global click listener for dropdown menus.
 
 function setLiveButtonState(isLive) {
   liveActive = isLive;
@@ -1300,7 +1256,7 @@ function setLiveButtonState(isLive) {
   }
 
   // Sync to mobile
-  socket.emit('status', {
+  emitSocketStatus({
     type: 'live-state',
     data: { active: liveActive }
   });
@@ -1308,9 +1264,6 @@ function setLiveButtonState(isLive) {
 
 // Logic: Clicking Live button toggles window (Open/Close)
 liveButton.addEventListener('click', () => {
-  // If active (Red), close it.
-  // If inactive (Gray), open it.
-  // We send 'toggle-live' with the DESIRED state (!liveActive)
   ipcRenderer.invoke('toggle-live', !liveActive);
 });
 
@@ -1492,8 +1445,9 @@ function clampPreviewPosition() {
 
   const minLeft = 10;
   const minTop = 45;
+  const footerHeight = (mediaControls && mediaControls.classList.contains('compact')) ? 65 : 95;
   const maxLeft = Math.max(minLeft, window.innerWidth - containerWidth - 10);
-  const maxTop = Math.max(minTop, window.innerHeight - containerHeight - 60);
+  const maxTop = Math.max(minTop, window.innerHeight - containerHeight - footerHeight);
 
   if (containerWidth > window.innerWidth - 20) {
     const newWidth = Math.max(200, window.innerWidth - 30);
@@ -1504,23 +1458,10 @@ function clampPreviewPosition() {
   let currentLeft = rect.left;
   let currentTop = rect.top;
 
-  let clamped = false;
-  if (currentLeft > maxLeft) {
-    currentLeft = maxLeft;
-    clamped = true;
-  }
-  if (currentLeft < minLeft) {
-    currentLeft = minLeft;
-    clamped = true;
-  }
-  if (currentTop > maxTop) {
-    currentTop = maxTop;
-    clamped = true;
-  }
-  if (currentTop < minTop) {
-    currentTop = minTop;
-    clamped = true;
-  }
+  if (currentLeft > maxLeft) currentLeft = maxLeft;
+  if (currentLeft < minLeft) currentLeft = minLeft;
+  if (currentTop > maxTop) currentTop = maxTop;
+  if (currentTop < minTop) currentTop = minTop;
 
   projectionPreviewContainer.style.right = 'auto';
   projectionPreviewContainer.style.bottom = 'auto';
@@ -1532,32 +1473,6 @@ function clampPreviewPosition() {
 window.addEventListener('resize', () => {
   clampPreviewPosition();
 });
-
-// Load and restore preview state on startup
-(async () => {
-  try {
-    const savedPos = await ipcRenderer.invoke('get-store-value', 'previewPosition');
-    const savedWidth = await ipcRenderer.invoke('get-store-value', 'previewWidth');
-    const savedMin = await ipcRenderer.invoke('get-store-value', 'previewMinimized');
-    const savedVis = await ipcRenderer.invoke('get-store-value', 'previewVisible');
-
-    if (savedVis !== undefined && savedVis !== null) isPreviewVisible = savedVis;
-    if (savedMin !== undefined && savedMin !== null) isPreviewMinimized = savedMin;
-    if (savedWidth && projectionPreviewContainer) {
-      projectionPreviewContainer.style.width = `${savedWidth}px`;
-    }
-    if (savedPos && savedPos.left && savedPos.top && projectionPreviewContainer) {
-      projectionPreviewContainer.style.right = 'auto';
-      projectionPreviewContainer.style.bottom = 'auto';
-      projectionPreviewContainer.style.left = savedPos.left;
-      projectionPreviewContainer.style.top = savedPos.top;
-    }
-    clampPreviewPosition();
-    updatePreviewContainerUI();
-  } catch (e) {
-    console.warn("Could not load preview settings:", e);
-  }
-})();
 
 // Direct window stream capture
 async function startWindowCapture() {
@@ -1636,7 +1551,7 @@ function selectHymn(item) {
   if (!item) return;
   selectedHymn = {
     file: item.file,
-    tab: item.tab || currentTab,
+    tab: item.tab || item.sourceTab || currentTab,
     category: item.category || currentCategory,
     display: item.display
   };
@@ -1645,6 +1560,13 @@ function selectHymn(item) {
   updateSongInfo(item.display);
   clearSearchResults();
   updateClearButtonVisibility();
+}
+
+function syncAudioSettingsToVideoWindow() {
+  ipcRenderer.send('media-command', { action: 'loop', value: isLooping });
+  if (playerVolume) {
+    ipcRenderer.send('media-command', { action: 'volume', value: parseFloat(playerVolume.value) });
+  }
 }
 
 async function playSelectedHymn() {
@@ -1675,6 +1597,7 @@ async function playSelectedHymn() {
   }
 
   try {
+    syncAudioSettingsToVideoWindow();
     const res = await ipcRenderer.invoke('play', {
       file: hymnToPlay.file,
       tab: hymnToPlay.tab || currentTab,
@@ -1738,8 +1661,6 @@ searchInput.addEventListener('keydown', (e) => {
       const indexToSelect = selectedResultIndex >= 0 ? selectedResultIndex : 0;
       if (currentResults[indexToSelect]) {
         selectHymn(currentResults[indexToSelect]);
-        // El himno queda seleccionado y la lista cerrada.
-        // El próximo Enter reproducirá directamente.
       }
     } else {
       // 2do ENTER: Reproducir el himno seleccionado (o el texto actual)
@@ -1786,6 +1707,7 @@ document.addEventListener('keydown', (e) => {
 
 ipcRenderer.on('video-window-opened', () => {
   setLiveButtonState(true);
+  syncAudioSettingsToVideoWindow();
   startWindowCapture();
 });
 ipcRenderer.on('video-window-closed', () => {
@@ -1797,38 +1719,42 @@ playButton.addEventListener('click', () => {
   playSelectedHymn();
 });
 
-// Init UI: Load persistent tab & preview settings
+// Init UI: Load persistent tab & preview settings (Single unified init)
 (async () => {
-  const savedTab = await ipcRenderer.invoke('get-store-value', 'lastTab');
-  if (savedTab === 'new' || savedTab === 'previous') {
-    currentTab = savedTab;
+  try {
+    const savedTab = await ipcRenderer.invoke('get-store-value', 'lastTab');
+    if (savedTab === 'new' || savedTab === 'previous') {
+      currentTab = savedTab;
+    }
+    updateTabVisuals();
+
+    // Set initial display of categorySelect based on loaded tab
+    categorySelect.style.display = currentTab === 'previous' ? 'none' : 'block';
+
+    // Load persistent preview settings, size & position
+    const savedVis = await ipcRenderer.invoke('get-store-value', 'previewVisible');
+    if (savedVis !== undefined && savedVis !== null) isPreviewVisible = savedVis;
+    const savedMin = await ipcRenderer.invoke('get-store-value', 'previewMinimized');
+    if (savedMin !== undefined && savedMin !== null) isPreviewMinimized = savedMin;
+
+    const savedWidth = await ipcRenderer.invoke('get-store-value', 'previewWidth');
+    if (savedWidth && typeof savedWidth === 'number' && savedWidth >= 200 && projectionPreviewContainer) {
+      projectionPreviewContainer.style.width = `${savedWidth}px`;
+    }
+
+    const savedPos = await ipcRenderer.invoke('get-store-value', 'previewPosition');
+    if (savedPos && savedPos.top && savedPos.left && projectionPreviewContainer) {
+      projectionPreviewContainer.style.right = 'auto';
+      projectionPreviewContainer.style.bottom = 'auto';
+      projectionPreviewContainer.style.left = savedPos.left;
+      projectionPreviewContainer.style.top = savedPos.top;
+    }
+
+    clampPreviewPosition();
+    updatePreviewContainerUI();
+  } catch (e) {
+    console.warn("Error initializing UI state:", e);
   }
-  updateTabVisuals();
-
-  // Set initial display of categorySelect based on loaded tab
-  categorySelect.style.display = currentTab === 'previous' ? 'none' : 'block';
-
-  // Load persistent preview settings, size & position
-  const savedVis = await ipcRenderer.invoke('get-store-value', 'previewVisible');
-  if (savedVis !== undefined && savedVis !== null) isPreviewVisible = savedVis;
-  const savedMin = await ipcRenderer.invoke('get-store-value', 'previewMinimized');
-  if (savedMin !== undefined && savedMin !== null) isPreviewMinimized = savedMin;
-
-  const savedWidth = await ipcRenderer.invoke('get-store-value', 'previewWidth');
-  if (savedWidth && typeof savedWidth === 'number' && savedWidth >= 200 && projectionPreviewContainer) {
-    projectionPreviewContainer.style.width = `${savedWidth}px`;
-  }
-
-  const savedPos = await ipcRenderer.invoke('get-store-value', 'previewPosition');
-  if (savedPos && savedPos.top && savedPos.left && projectionPreviewContainer) {
-    projectionPreviewContainer.style.right = 'auto';
-    projectionPreviewContainer.style.bottom = 'auto';
-    projectionPreviewContainer.style.left = savedPos.left;
-    projectionPreviewContainer.style.top = savedPos.top;
-  }
-
-  updatePreviewContainerUI();
-  startWindowCapture();
 })();
 
 function updateTabVisuals() {
@@ -1845,6 +1771,31 @@ function updateTabVisuals() {
   }
 }
 
+async function refreshSelectionOrSearchOnFilterChange() {
+  const isResultsOpen = resultsDiv.classList.contains('active-results');
+  if (selectedHymn) {
+    const keyMatch = selectedHymn.display.match(/^(\d{1,4})/) || searchInput.value.match(/^(\d{1,4})/);
+    if (keyMatch) {
+      const key = keyMatch[1];
+      const items = await ipcRenderer.invoke('search', {
+        query: key,
+        tab: currentTab,
+        category: currentCategory
+      });
+      if (items && items.length > 0) {
+        selectHymn(items[0]);
+        return;
+      }
+    }
+    selectedHymn.tab = currentTab;
+    selectedHymn.category = currentCategory;
+  } else if (isResultsOpen && searchInput.value.trim()) {
+    await doSearch();
+  } else {
+    clearSearchResults();
+  }
+}
+
 // pestañas
 tabPrevious.addEventListener('click', async () => {
   if (currentTab === 'previous') return;
@@ -1853,20 +1804,7 @@ tabPrevious.addEventListener('click', async () => {
   categorySelect.style.display = 'none';
   ipcRenderer.invoke('set-store-value', 'lastTab', 'previous'); // Save
 
-  // Update input value and selectedHymn based on current key
-  const keyMatch = searchInput.value.match(/^(\d{1,4})/);
-  if (keyMatch) {
-    const key = keyMatch[1];
-    const items = await ipcRenderer.invoke('search', {
-      query: key,
-      tab: currentTab,
-      category: currentCategory
-    });
-    if (items && items.length > 0) {
-      selectHymn(items[0]);
-    }
-  }
-  clearSearchResults();
+  await refreshSelectionOrSearchOnFilterChange();
 });
 
 tabNew.addEventListener('click', async () => {
@@ -1876,20 +1814,7 @@ tabNew.addEventListener('click', async () => {
   categorySelect.style.display = 'block';
   ipcRenderer.invoke('set-store-value', 'lastTab', 'new'); // Save
 
-  // Update input value and selectedHymn based on current key
-  const keyMatch = searchInput.value.match(/^(\d{1,4})/);
-  if (keyMatch) {
-    const key = keyMatch[1];
-    const items = await ipcRenderer.invoke('search', {
-      query: key,
-      tab: currentTab,
-      category: currentCategory
-    });
-    if (items && items.length > 0) {
-      selectHymn(items[0]);
-    }
-  }
-  clearSearchResults();
+  await refreshSelectionOrSearchOnFilterChange();
 });
 
 // selector categoría
@@ -1913,7 +1838,7 @@ if (categoryButton) {
 
 // Using event delegation for the new DIV options structure
 if (categoryOptions) {
-  categoryOptions.addEventListener('click', (e) => {
+  categoryOptions.addEventListener('click', async (e) => {
     const option = e.target.closest('[data-value]');
     if (option) {
       e.stopPropagation();
@@ -1924,7 +1849,7 @@ if (categoryOptions) {
       }
 
       categoryOptions.classList.remove('active-menu');
-      clearSearchResults();
+      await refreshSelectionOrSearchOnFilterChange();
     }
   });
 
@@ -2016,6 +1941,10 @@ async function doSearch() {
 }
 
 searchInput.addEventListener('input', () => {
+  if (selectedHymn && searchInput.value.trim() !== selectedHymn.display) {
+    selectedHymn = null;
+    selectedFile = null;
+  }
   updateClearButtonVisibility();
   doSearch();
 });
@@ -2046,12 +1975,11 @@ clearSearchButton.addEventListener('click', () => {
   searchInput.focus();
 });
 
-// click fuera cierra dropdowns
+// click fuera cierra resultados de búsqueda
 document.addEventListener('click', event => {
-  if (categorySelect && !categorySelect.contains(event.target))
-    categoryOptions.classList.add('hidden');
-  if (resultsDiv && !resultsDiv.contains(event.target) && event.target !== searchInput)
+  if (resultsDiv && !resultsDiv.contains(event.target) && event.target !== searchInput) {
     clearSearchResults();
+  }
 });
 
 // ————— Media Control Logic —————
@@ -2059,6 +1987,7 @@ let isDraggingSeek = false;
 let currentHymnNumber = null;
 
 function formatTime(seconds) {
+  if (!seconds || isNaN(seconds)) return "0:00";
   const min = Math.floor(seconds / 60);
   const sec = Math.floor(seconds % 60);
   return `${min}:${sec < 10 ? '0' : ''}${sec}`;
@@ -2071,12 +2000,14 @@ async function playNeighbor(offset) {
   if (targetNum < 1) return; // Boundary check
 
   const targetStr = targetNum.toString().padStart(3, '0');
+  const searchTab = (selectedHymn && selectedHymn.tab) ? selectedHymn.tab : currentTab;
+  const searchCat = (selectedHymn && selectedHymn.category) ? selectedHymn.category : currentCategory;
 
   // Search for the track
   const items = await ipcRenderer.invoke('search', {
     query: targetStr,
-    tab: currentTab,
-    category: currentCategory
+    tab: searchTab,
+    category: searchCat
   });
 
   const match = items.find(item => item.display.startsWith(targetStr)) || items[0];
@@ -2093,17 +2024,21 @@ playerStop.addEventListener('click', () => {
 
 playerLoop.addEventListener('click', () => {
   isLooping = !isLooping;
-  playerLoop.style.color = isLooping ? '#4F46E5' : '#999'; // Blue when active
+  playerLoop.style.color = isLooping ? '#4F46E5' : '#9ca3af'; // Blue when active
   ipcRenderer.send('media-command', { action: 'loop', value: isLooping });
+  emitSocketStatus({
+    type: 'sync-status',
+    data: { loop: isLooping }
+  });
 });
 
 playerPrev.addEventListener('click', () => playNeighbor(-1));
 playerNext.addEventListener('click', () => playNeighbor(1));
 
 function updateSongInfo(displayString) {
-  if (!displayString) {
+  if (!displayString || displayString === '-') {
     playerSongTitle.textContent = '-';
-    playerSongNumber.textContent = '';
+    playerSongNumber.textContent = '-';
     currentHymnNumber = null;
     return;
   }
@@ -2160,13 +2095,16 @@ function updateSeekFill() {
   const val = playerSeek.value;
   const percentage = (val - min) * 100 / (max - min);
 
-  // Set CSS variable or direct background style for the "Black Fill" effect
-  // We use linear-gradient: Black up to X%, Gray after.
   playerSeek.style.backgroundImage = `linear-gradient(to right, black ${percentage}%, #e5e7eb ${percentage}%)`;
 }
 
 playerVolume.addEventListener('input', () => {
-  ipcRenderer.send('media-command', { action: 'volume', value: parseFloat(playerVolume.value) });
+  const vol = parseFloat(playerVolume.value);
+  ipcRenderer.send('media-command', { action: 'volume', value: vol });
+  emitSocketStatus({
+    type: 'sync-status',
+    data: { volume: vol }
+  });
 });
 
 fullscreenButton.addEventListener('click', () => {
@@ -2176,16 +2114,16 @@ fullscreenButton.addEventListener('click', () => {
 // Update UI from Video Window status
 ipcRenderer.on('media-status', (event, status) => {
   // Relay to Mobile
-  if (io && socket) {
-    socket.emit('status', {
-      type: 'sync-status',
-      data: {
-        ...status,
-        title: playerSongTitle.textContent,
-        number: playerSongNumber.textContent
-      }
-    });
-  }
+  emitSocketStatus({
+    type: 'sync-status',
+    data: {
+      ...status,
+      title: playerSongTitle.textContent,
+      number: playerSongNumber.textContent,
+      loop: isLooping,
+      volume: playerVolume ? parseFloat(playerVolume.value) : 100
+    }
+  });
 
   if (status.type === 'timeupdate') {
     if (!isDraggingSeek) {
@@ -2223,13 +2161,12 @@ ipcRenderer.on('media-stopped', () => {
   updateSongInfo("-");
 
   // Sync Stop
-  if (io && socket) {
-    socket.emit('status', {
-      type: 'sync-status',
-      data: { type: 'stopped' }
-    });
-  }
+  emitSocketStatus({
+    type: 'sync-status',
+    data: { type: 'stopped' }
+  });
 });
+
 // ————— Compact Mode Logic —————
 const toggleCompactBtn = document.getElementById('toggleCompact');
 const iconCollapse = document.getElementById('iconCollapse');
@@ -2246,10 +2183,7 @@ toggleCompactBtn.addEventListener('click', () => {
     iconExpand.style.display = 'none';
   }
 
-  if (projectionPreviewContainer) {
-    projectionPreviewContainer.style.bottom = isCompact ? '74px' : '104px';
-  }
-
+  clampPreviewPosition();
   ipcRenderer.invoke('set-store-value', 'playerCompact', isCompact);
 });
 
@@ -2260,167 +2194,195 @@ toggleCompactBtn.addEventListener('click', () => {
     mediaControls.classList.add('compact');
     iconCollapse.style.display = 'none';
     iconExpand.style.display = 'block';
-    if (projectionPreviewContainer) {
-      projectionPreviewContainer.style.bottom = '74px';
-    }
+    clampPreviewPosition();
   }
 })();
-// Socket moved to top
 
+// ————— Dynamic Socket.IO Connection to Local Remote Server —————
+function connectSocket(port = 3000) {
+  if (socket) {
+    try {
+      socket.removeAllListeners();
+      socket.disconnect();
+    } catch (e) {}
+    socket = null;
+  }
 
-socket.on('connect', () => {
-  console.log('Connected to local remote server');
-  socket.emit('register', 'desktop');
-});
+  socket = io(`http://localhost:${port}`);
 
-socket.on('command', (data) => {
-  console.log('Remote command:', data);
-  const { action } = data;
+  socket.on('connect', () => {
+    console.log(`Connected to local remote server on port ${port}`);
+    socket.emit('register', 'desktop');
+  });
 
-  switch (action) {
-    case 'play':
-      if (data.file) {
-        // Play specific file from Search Result
-        selectHymn({
-          file: data.file,
-          tab: data.tab || currentTab,
-          category: data.category || currentCategory,
-          display: data.display || data.file
-        });
-        playSelectedHymn();
-      } else {
-        // Resume if paused
-        if (iconPlay.style.display !== 'none') playerPlayPause.click();
-      }
-      break;
-    case 'pause':
-      if (iconPlay.style.display === 'none') playerPlayPause.click();
-      break;
-    case 'playPause':
-      playerPlayPause.click();
-      break;
-    case 'stop':
-      playerStop.click();
-      break;
-    case 'next':
-      playerNext.click();
-      break;
-    case 'prev':
-      playerPrev.click();
-      break;
-    case 'seek':
-      if (data.value !== undefined) {
-        playerSeek.value = data.value;
-        ipcRenderer.send('media-command', { action: 'seek', value: parseFloat(data.value) });
-        updateSeekFill();
-      }
-      break;
-    case 'volume':
-      if (data.value !== undefined) {
-        playerVolume.value = data.value;
-        ipcRenderer.send('media-command', { action: 'volume', value: parseFloat(data.value) });
-      }
-      break;
-    case 'search':
-      if (data.query) {
-        const queryStr = data.query.toString(); // Allow text or number
-        // searchInput.value = queryStr; // Sync desktop input? Maybe annoying if typing.
-        // Let's NOT sync input if it disrupts, but user might want to see it.
-        // Kept it originally.
+  socket.on('command', (data) => {
+    console.log('Remote command:', data);
+    const { action } = data;
 
-        // determine sources
-        const sources = [];
-        if (data.source === 'both') {
-          sources.push('previous', 'new');
-        } else if (data.source === 'previous') {
-          sources.push('previous');
-        } else {
-          sources.push('new');
-        }
-
-        // Use category from mobile (data.category) or fallback to desktop current
-        const searchCat = data.category || currentCategory;
-
-        // Perform searches
-        Promise.all(sources.map(async (tab) => {
-          console.log(`[DEBUG-RENDERER] Invoking search - Query: ${queryStr}, Tab: ${tab}, Cat: ${searchCat}`);
-          const items = await ipcRenderer.invoke('search', {
-            query: queryStr,
-            tab: tab,
-            category: searchCat
-          });
-          console.log(`[DEBUG-RENDERER] Result for ${tab}: ${items.length} items`);
-          // Tag items with source
-          return items.map(i => ({ ...i, sourceTab: tab, category: searchCat }));
-        })).then(results => {
-          let finalResults = [];
-
-          if (data.source === 'both' && results.length >= 2) {
-            // Interleave: [Prev, New, Prev, New...]
-            const prevItems = results.find(r => r.length > 0 && r[0].sourceTab === 'previous') || [];
-            const newItems = results.find(r => r.length > 0 && r[0].sourceTab === 'new') || [];
-
-            const maxLen = Math.max(prevItems.length, newItems.length);
-            for (let i = 0; i < maxLen; i++) {
-              if (i < prevItems.length) finalResults.push(prevItems[i]);
-              if (i < newItems.length) finalResults.push(newItems[i]);
+    switch (action) {
+      case 'play':
+        if (data.file) {
+          // Sync desktop tab & category with remote selection
+          if (data.tab === 'previous' || data.tab === 'new') {
+            currentTab = data.tab;
+            updateTabVisuals();
+            categorySelect.style.display = currentTab === 'previous' ? 'none' : 'block';
+          }
+          if (data.category) {
+            currentCategory = data.category;
+            if (categoryButtonText) {
+              categoryButtonText.textContent = currentCategory.toUpperCase();
             }
+          }
+          selectHymn({
+            file: data.file,
+            tab: data.tab || currentTab,
+            category: data.category || currentCategory,
+            display: data.display || data.file
+          });
+          playSelectedHymn();
+        } else {
+          // Resume if paused
+          if (iconPlay.style.display !== 'none') playerPlayPause.click();
+        }
+        break;
+      case 'pause':
+        if (iconPlay.style.display === 'none') playerPlayPause.click();
+        break;
+      case 'playPause':
+        playerPlayPause.click();
+        break;
+      case 'stop':
+        playerStop.click();
+        break;
+      case 'next':
+        playerNext.click();
+        break;
+      case 'prev':
+        playerPrev.click();
+        break;
+      case 'seek':
+        if (data.value !== undefined) {
+          playerSeek.value = data.value;
+          ipcRenderer.send('media-command', { action: 'seek', value: parseFloat(data.value) });
+          updateSeekFill();
+        }
+        break;
+      case 'volume':
+        if (data.value !== undefined) {
+          playerVolume.value = data.value;
+          ipcRenderer.send('media-command', { action: 'volume', value: parseFloat(data.value) });
+        }
+        break;
+      case 'search':
+        if (data.query) {
+          const queryStr = data.query.toString();
+
+          // determine sources
+          const sources = [];
+          if (data.source === 'both') {
+            sources.push('previous', 'new');
+          } else if (data.source === 'previous') {
+            sources.push('previous');
           } else {
-            finalResults = results.flat();
+            sources.push('new');
           }
 
-          // We usually render on Desktop too?
-          // renderSearchResults(flatResults); // Optional: update desktop UI too? 
-          // If we update desktop UI, we might confuse the user if they look at desktop.
-          // But usually remote reflects on desktop. Let's do it if we sync input.
-          // But wait, if we render on desktop, we overwrite local state.
-          // Let's just send back to mobile for now to be safe, or do both.
-          // Original code did renderSearchResults.
+          // Use category from mobile (data.category) or fallback to desktop current
+          const searchCat = data.category || currentCategory;
 
-          socket.emit('status', {
-            type: 'search-results',
-            data: finalResults
+          // Perform searches
+          Promise.all(sources.map(async (tab) => {
+            const items = await ipcRenderer.invoke('search', {
+              query: queryStr,
+              tab: tab,
+              category: searchCat
+            });
+            return items.map(i => ({ ...i, sourceTab: tab, category: searchCat }));
+          })).then(results => {
+            let finalResults = [];
+
+            if (data.source === 'both' && results.length >= 2) {
+              finalResults = results.flat().sort((a, b) => {
+                const scoreA = a.score !== undefined ? a.score : 999;
+                const scoreB = b.score !== undefined ? b.score : 999;
+                if (scoreA !== scoreB) return scoreA - scoreB;
+                const numA = a.numVal !== undefined ? a.numVal : 9999;
+                const numB = b.numVal !== undefined ? b.numVal : 9999;
+                if (numA !== numB) return numA - numB;
+                return a.display.localeCompare(b.display);
+              });
+            } else {
+              finalResults = results.flat();
+            }
+
+            emitSocketStatus({
+              type: 'search-results',
+              data: finalResults
+            });
           });
+        }
+        break;
+      case 'get-monitors':
+        ipcRenderer.invoke('get-monitors').then(res => {
+          emitSocketStatus({ type: 'monitors-list', data: res });
         });
-      }
-      break;
-    case 'load-media':
-      // ... existing logic if any ...
-      break;
-    case 'get-monitors':
-      ipcRenderer.invoke('get-monitors').then(res => {
-        // Send full object: { list, selected }
-        socket.emit('status', { type: 'monitors-list', data: res });
-      });
-      break;
-    case 'set-monitor':
-      if (data.id) {
-        ipcRenderer.invoke('set-monitor', data.id).then(async () => {
-          // Broadcast confirmation back to all (including the sender, to confirm)
-          const res = await ipcRenderer.invoke('get-monitors');
-          socket.emit('status', { type: 'monitors-list', data: res });
+        break;
+      case 'set-monitor':
+        if (data.id) {
+          ipcRenderer.invoke('set-monitor', data.id).then(async () => {
+            const res = await ipcRenderer.invoke('get-monitors');
+            emitSocketStatus({ type: 'monitors-list', data: res });
+            updateMonitorPill();
+          });
+        }
+        break;
+      case 'toggle-live':
+        ipcRenderer.invoke('toggle-live', data.active);
+        break;
+      case 'fullscreen':
+        ipcRenderer.send('media-command', { action: 'fullscreen' });
+        break;
+      case 'loop':
+        isLooping = !!data.value;
+        playerLoop.style.color = isLooping ? '#4F46E5' : '#9ca3af';
+        ipcRenderer.send('media-command', { action: 'loop', value: isLooping });
+        emitSocketStatus({
+          type: 'sync-status',
+          data: { loop: isLooping }
         });
-      }
-      break;
-    case 'toggle-live':
-      ipcRenderer.invoke('toggle-live', data.active);
-      break;
-    case 'fullscreen':
-      ipcRenderer.send('media-command', { action: 'fullscreen' });
-      break;
-    case 'loop':
-      ipcRenderer.send('media-command', { action: 'loop', value: data.value });
-      break;
-    case 'get-live-state':
-      socket.emit('status', {
-        type: 'live-state',
-        data: { active: liveActive }
-      });
-      break;
-    case 'seek-percent':
-      // Fix: Send 'seek' action which video.html understands (value 0-100)
-      ipcRenderer.send('media-command', { action: 'seek', value: data.percent });
-      break;
-  }
-});
+        break;
+      case 'get-status':
+        emitSocketStatus({
+          type: 'sync-status',
+          data: {
+            type: iconPlay.style.display === 'none' ? 'play' : 'pause',
+            title: playerSongTitle.textContent,
+            number: playerSongNumber.textContent,
+            loop: isLooping,
+            volume: playerVolume ? parseFloat(playerVolume.value) : 100
+          }
+        });
+        break;
+      case 'get-live-state':
+        emitSocketStatus({
+          type: 'live-state',
+          data: { active: liveActive }
+        });
+        break;
+      case 'seek-percent':
+        ipcRenderer.send('media-command', { action: 'seek', value: parseFloat(data.percent) });
+        break;
+    }
+  });
+}
 
+// Connect socket on startup using stored server port
+(async () => {
+  try {
+    const config = await ipcRenderer.invoke('get-server-config');
+    connectSocket((config && config.port) ? config.port : 3000);
+  } catch (e) {
+    connectSocket(3000);
+  }
+})();
